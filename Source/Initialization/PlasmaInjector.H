@@ -163,6 +163,13 @@ protected:
 
     amrex::Real flux;
 
+public:
+    // Runtime-adjustable parameters for interactive flux control (settable from Python callbacks)
+    amrex::Real flux_multiplier = 1.0;   // Scales the flux (affects particle injection rate)
+    amrex::Real injection_weight = -1.0; // If > 0, fixes particle weight and adjusts num_ppc to match flux
+                                         // If <= 0, uses default behavior (fixed num_ppc, weight from flux)
+
+protected:
     int species_id;
     std::string species_name;
     std::string source_name;

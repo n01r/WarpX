@@ -6,6 +6,7 @@
 
 #include "Python/pyWarpX.H"
 
+#include <Initialization/InjectorPosition.H>
 #include <Particles/WarpXParticleContainer.H>
 
 
@@ -152,6 +153,15 @@ void init_WarpXParticleContainer (py::module& m)
         .def("set_do_not_deposit",
             [](WarpXParticleContainer& pc, int flag) { pc.setDoNotDeposit(flag); },
             py::arg("flag")
+        )
+        .def("get_plasma_injector",
+            [](WarpXParticleContainer& pc, int i) { 
+                return pc.GetPlasmaInjector(i); 
+            },
+            py::arg("i"),
+            py::return_value_policy::reference,
+            "Get the i-th plasma injector for this species. "
+            "For flux injection, typically use index 0."
         )
     ;
 }

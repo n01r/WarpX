@@ -1251,6 +1251,11 @@ PhysicalParticleContainer::AddPlasmaFlux (PlasmaInjector const& plasma_injector,
     InjectorMomentum* inj_mom = plasma_injector.getInjectorMomentumDevice();
     constexpr int level_zero = 0;
     const amrex::Real t = WarpX::GetInstance().gett_new(level_zero);
+    
+    // Get runtime-adjustable parameters (can be modified from Python callbacks)
+    const amrex::Real flux_multiplier = plasma_injector.flux_multiplier;
+    const amrex::Real injection_weight = plasma_injector.injection_weight;
+    const bool use_fixed_weight = (injection_weight > 0.0);
 
 #if defined(WARPX_DIM_RZ) || defined(WARPX_DIM_RCYLINDER)
     const int nmodes = WarpX::n_rz_azimuthal_modes;
@@ -1335,19 +1340,52 @@ PhysicalParticleContainer::AddPlasmaFlux (PlasmaInjector const& plasma_injector,
             const amrex::IntVect iv(AMREX_D_DECL(i, j, k));
             amrex::ignore_unused(j,k);
 
-            // Determine the number of macroparticles to inject in this cell (num_ppc_int)
+            // Determine the number of macroparticles to inject in this cell
+            // Mode 1 (default): fixed num_ppc, weight calculated from flux
+            // Mode 2 (use_fixed_weight=true): num_ppc adjusted to maintain flux with fixed weight
 #ifdef AMREX_USE_EB
-            amrex::Real num_ppc_real_in_this_cell = num_ppc_real; // user input: number of macroparticles per cell
+            amrex::Real num_ppc_real_in_this_cell = num_ppc_real;
             if (inject_from_eb) {
-                // Injection from EB
                 // Skip cells that are not partially covered by the EB
                 if (eb_flag_arr(i,j,k).isRegular() || eb_flag_arr(i,j,k).isCovered()) { return; }
                 // Scale by the (normalized) area of the EB surface in this cell
                 num_ppc_real_in_this_cell *= eb_data.get<amrex::EBData_t::bndryarea>(i,j,k);
             }
 #else
-            amrex::Real const num_ppc_real_in_this_cell = num_ppc_real; // user input: number of macroparticles per cell
+            amrex::Real num_ppc_real_in_this_cell = num_ppc_real;
 #endif
+
+            // Mode 2: Adjust num_ppc based on weight ratio if fixed weight is specified
+            if (use_fixed_weight) {
+                // Compute scale_fac for this cell (same calculation as in particle creation kernel)
+                amrex::Real scale_fac;
+#ifdef AMREX_USE_EB
+                if (inject_from_eb) {
+                    scale_fac = compute_scale_fac_area_eb(dx, num_ppc_real,
+                                                          AMREX_D_DECL(eb_data.get<amrex::EBData_t::bndrynorm>(i,j,k,0),
+                                                                       eb_data.get<amrex::EBData_t::bndrynorm>(i,j,k,1),
+                                                                       eb_data.get<amrex::EBData_t::bndrynorm>(i,j,k,2)));
+                } else
+#endif
+                {
+                    scale_fac = compute_scale_fac_area_plane(dx, num_ppc_real, flux_normal_axis);
+                }
+                
+                // Get flux at cell center as approximation for this cell
+                auto cell_center = getCellCoords(overlap_corner, dx, {0.5_rt, 0.5_rt, 0.5_rt}, iv);
+                const amrex::Real flux_at_cell = inj_flux->getFlux(cell_center.x, cell_center.y, cell_center.z, t);
+                
+                // Calculate what the weight would be in Mode 1 (without radial corrections for simplicity)
+                const amrex::Real weight_from_flux = flux_at_cell * flux_multiplier * scale_fac * dt;
+                
+                // Adjust num_ppc to achieve the desired fixed weight
+                // physical_flux = (num_ppc / area / dt) * weight
+                // To maintain same flux with different weight: num_ppc_new = num_ppc_old * (weight_old / weight_new)
+                if (weight_from_flux > 0.0 && injection_weight > 0.0) {
+                    num_ppc_real_in_this_cell *= (weight_from_flux / injection_weight);
+                }
+            }
+
             // Skip cells that do not overlap with the bounds specified by the user (xmin/xmax, ymin/ymax, zmin/zmax)
             auto lo = getCellCoords(overlap_corner, dx, {0._rt, 0._rt, 0._rt}, iv);
             auto hi = getCellCoords(overlap_corner, dx, {1._rt, 1._rt, 1._rt}, iv);
@@ -1623,7 +1661,9 @@ PhysicalParticleContainer::AddPlasmaFlux (PlasmaInjector const& plasma_injector,
                 pu.y = cos_phi*sin_theta*ur + cos_theta*ut - sin_phi*sin_theta*up;
                 pu.z = sin_phi*ur + cos_phi*up;
 #endif
-                const amrex::Real flux = inj_flux->getFlux(ppos.x, ppos.y, ppos.z, t);
+                const amrex::Real flux_base = inj_flux->getFlux(ppos.x, ppos.y, ppos.z, t);
+                // Apply runtime flux multiplier (can be adjusted from Python callbacks)
+                const amrex::Real flux = flux_base * flux_multiplier;
                 // Remove particle if flux is negative or 0
                 if (flux <= 0) {
                     pa_idcpu[ip] = amrex::ParticleIdCpus::Invalid;
@@ -1689,7 +1729,9 @@ PhysicalParticleContainer::AddPlasmaFlux (PlasmaInjector const& plasma_injector,
 #else
                 const amrex::Real weight = flux * scale_fac * dt;
 #endif
-                pa[PIdx::w ][ip] = weight;
+                // Mode 2: If injection_weight is specified, use it instead of flux-based weight
+                // (Note: num_ppc was already adjusted in counting kernel to maintain physical flux)
+                pa[PIdx::w][ip] = use_fixed_weight ? injection_weight : weight;
                 pa[PIdx::ux][ip] = pu.x;
                 pa[PIdx::uy][ip] = pu.y;
                 pa[PIdx::uz][ip] = pu.z;
