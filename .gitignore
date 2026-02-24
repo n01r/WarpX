@@ -67,6 +67,11 @@ cmake-build-*/
 #################
 WARP.md
 
+###############
+# MCP servers #
+###############
+.ai
+
 # File-based project format:
 *.iws
 
