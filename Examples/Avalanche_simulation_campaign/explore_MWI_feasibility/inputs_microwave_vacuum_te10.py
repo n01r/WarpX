@@ -38,11 +38,21 @@ dx = wavelength / cells_per_wavelength
 dy = wavelength / cells_per_wavelength
 dz = wavelength / cells_per_wavelength
 
-nx = int(x_size / dx)
-ny = int(y_size / dy)
-nz = int(z_size / dz)
+# Calculate initial number of cells
+nx_raw = int(x_size / dx)
+ny_raw = int(y_size / dy)
+nz_raw = int(z_size / dz)
 
-# Adjust to make dimensions exact
+# Round to nearest multiple of 8 for GPU efficiency and AMReX compatibility
+def round_to_multiple(n, multiple=8):
+    """Round to nearest multiple, ensuring at least 'multiple' cells."""
+    return max(multiple, int(np.round(n / multiple) * multiple))
+
+nx = round_to_multiple(nx_raw, 8)
+ny = round_to_multiple(ny_raw, 8)
+nz = round_to_multiple(nz_raw, 8)
+
+# Adjust cell sizes to match rounded dimensions
 dx = x_size / nx
 dy = y_size / ny
 dz = z_size / nz
@@ -56,18 +66,21 @@ print(f"Time step: {dt*1e15:.3f} fs (omega*dt = {omega*dt:.3f})")
 pml_ncells = 10
 
 # Create 3D Cartesian grid with PML boundaries
+# Note: PICMI uses 'open' for PML, not 'pml'
+# Grid dimensions are divisible by 8 for GPU efficiency
 grid = picmi.Cartesian3DGrid(
     number_of_cells=[nx, ny, nz],
     lower_bound=[-x_size/2, -y_size/2, -z_size/2],
     upper_bound=[x_size/2, y_size/2, z_size/2],
     lower_boundary_conditions=['open', 'open', 'open'],
     upper_boundary_conditions=['open', 'open', 'open'],
-    warpx_max_grid_size=128,
-    warpx_blocking_factor=32,
+    warpx_max_grid_size_x=nx,
+    warpx_max_grid_size_y=ny,
+    warpx_max_grid_size_z=nz,
 )
 
 # Yee solver with PML
-cfl = c * dt / min(dx, dy, dz)
+cfl = 0.995 #c * dt / min(dx, dy, dz)
 print(f"CFL number: {cfl:.3f}")
 
 solver = picmi.ElectromagneticSolver(
@@ -188,16 +201,24 @@ field_energy_diag = picmi.ReducedDiagnostic(
     period=10,
 )
 
+# Create embedded boundary from STL file
+# Replace 'embedded_object.stl' with your actual STL file path
+embedded_boundary = picmi.EmbeddedBoundary(
+    stl_file='./stl_input/cleaned_mwi_horns.STL',
+    cover_multiple_cuts=True,  # Handle complex geometry with features smaller than grid
+    # Optional parameters:
+    # stl_scale=1.0,  # Scale factor for STL geometry
+    # stl_center=[0, 0, 0],  # Translation vector (meters)
+    # stl_reverse_normal=False,  # Invert orientation
+)
+
 # Create simulation
 sim = picmi.Simulation(
     solver=solver,
-    time_step_size=dt,
-    max_steps=5000,
+    #time_step_size=dt,
+    max_steps=10,
     verbose=1,
-    warpx_embedded_boundary=dict(
-        geom_type='stl',
-        stl_file='embedded_object.stl',  # Replace with your STL file path
-    ),
+    warpx_embedded_boundary=embedded_boundary,
 )
 
 # Add emitting antenna source
