@@ -158,7 +158,7 @@ emit_antenna = picmi.AnalyticAppliedField(
     Bz_expression="0",
 )
 
-# Diagnostic plane at receiving horn location
+# Diagnostic plane at receiving horn location (Full 3D diagnostic)
 # Records E and B fields at EVERY time step (period=1)
 recv_plane_diag = picmi.FieldDiagnostic(
     name='receiving_plane',
@@ -177,12 +177,34 @@ recv_plane_diag = picmi.FieldDiagnostic(
                  recv_plane_z_pos + dz],
 )
 
-# Field diagnostics
+# FieldProbe plane diagnostic (for performance comparison)
+# Samples fields on a 2D plane using FieldProbe reduced diagnostic
+recv_plane_probe = picmi.ReducedDiagnostic(
+    diag_type="FieldProbe",
+    name="recv_probe",
+    period=1,  # Every time step like full diagnostic
+    path="diags/",
+    extension="dat",
+    probe_geometry="Plane",
+    resolution=50,  # Number of points along each edge
+    x_probe=recv_plane_x_center,
+    y_probe=recv_plane_y_center,
+    z_probe=recv_plane_z_pos,
+    detector_radius=min(horn_half_width_x, horn_half_width_y),  # Half edge length
+    target_normal_x=0.0,
+    target_normal_y=0.0,
+    target_normal_z=1.0,  # Normal pointing in +z direction
+    target_up_x=0.0,
+    target_up_y=1.0,  # Up direction in y
+    target_up_z=0.0,
+)
+
+# Field diagnostics (full domain with embedded boundary visualization)
 field_diag = picmi.FieldDiagnostic(
     name='fields',
     grid=grid,
     period=100,
-    data_list=['E', 'B'],
+    data_list=['E', 'B', 'eb_covered'],  # Added eb_covered to visualize embedded boundary
     write_dir='./diags',
     warpx_format='openpmd',
     warpx_openpmd_backend='h5',
@@ -225,14 +247,20 @@ sim = picmi.Simulation(
 sim.add_applied_field(emit_antenna)
 
 # Add diagnostics
-sim.add_diagnostic(field_diag)  # Full domain, periodic
-sim.add_diagnostic(recv_plane_diag)  # Receiving plane, every timestep
+sim.add_diagnostic(field_diag)  # Full domain, periodic (with eb_covered)
+sim.add_diagnostic(recv_plane_diag)  # Receiving plane full 3D, every timestep
+sim.add_diagnostic(recv_plane_probe)  # Receiving plane FieldProbe, every timestep
 sim.add_diagnostic(field_max_diag)  # Reduced diagnostic
 sim.add_diagnostic(field_energy_diag)  # Reduced diagnostic
 
 # Write input file or run simulation
 if __name__ == "__main__":
     import sys
+    
+    # FieldProbe requires algo.particle_shape for interpolation
+    # Must be set before initialization
+    import pywarpx
+    pywarpx.algo.particle_shape = 1
     
     if '--write-inputs' in sys.argv:
         # Write input file for compiled WarpX
