@@ -167,14 +167,14 @@ recv_plane_diag = picmi.FieldDiagnostic(
     data_list=['Ex', 'Ey', 'Ez', 'Bx', 'By', 'Bz'],
     write_dir='./diags',
     warpx_format='openpmd',
-    warpx_openpmd_backend='h5',
+    warpx_openpmd_backend='bp5',
     # Limit diagnostic to receiving plane region
     lower_bound=[recv_plane_x_center - horn_half_width_x,
                  recv_plane_y_center - horn_half_width_y,
-                 recv_plane_z_pos - dz],
+                 recv_plane_z_pos],
     upper_bound=[recv_plane_x_center + horn_half_width_x,
                  recv_plane_y_center + horn_half_width_y,
-                 recv_plane_z_pos + dz],
+                 recv_plane_z_pos],
 )
 
 # FieldProbe plane diagnostic (for performance comparison)
@@ -268,8 +268,10 @@ if __name__ == "__main__":
         print("\nInput file written to 'inputs_from_picmi'")
     else:
         # Run with libwarpx
+        print("\nInitializing inputs...", flush=True)
         sim.initialize_inputs()
+        print("\nInitializing WarpX...", flush=True)
         sim.initialize_warpx()
-        print("\nStarting simulation...")
+        print("\nStarting simulation...", flush=True)
         sim.step(sim.max_steps)
-        print("Simulation complete!")
+        print("Simulation complete!", flush=True)
