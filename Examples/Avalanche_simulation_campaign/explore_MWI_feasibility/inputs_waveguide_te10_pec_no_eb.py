@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-3D WarpX vacuum simulation with TE10 mode injection
+3D WarpX vacuum simulation with TE10 mode injection in straight WR-15 waveguide
 Microwave frequency: 67 GHz
-PML boundaries with embedded boundary from STL file
+PEC boundaries in x/y (waveguide walls), PML in z (no embedded boundary)
 """
 
 import numpy as np
@@ -22,16 +22,17 @@ k0 = 2 * np.pi / wavelength
 # Time step (omega * dt <= 0.2 for stability)
 dt = 0.2 / omega  # ~4.75e-13 s
 
-# Domain dimensions (in meters) - tight fit around STL (±10.6 mm) + PML padding
-x_size = 0.030  # 30 mm
-y_size = 0.030  # 30 mm
-z_size = 0.280  # 280 mm (STL spans ±130 mm)
-
 # Horn aperture dimensions (for TE10 mode)
 # These define the waveguide mode at the emitting horn
 # Compare with https://www.everythingrf.com/tech-resources/waveguides-sizes/wr15
 a_horn = 3.7592e-3  # Horn width in x - determines TE10 cutoff
 b_horn = 1.8796e-3  # Horn height in y
+
+# Domain dimensions (in meters)
+# x/y = waveguide cross-section (PEC walls act as waveguide boundaries)
+x_size = a_horn  # 3.759 mm (exact WR-15 width)
+y_size = b_horn  # 1.880 mm (exact WR-15 height)
+z_size = 0.280   # 280 mm (same as EB version for comparison)
 
 # Grid resolution: 20 cells/wavelength gives ~8 cells across WR15 narrow dim (b=1.88mm)
 cells_per_wavelength = 16
@@ -73,11 +74,10 @@ grid = picmi.Cartesian3DGrid(
     number_of_cells=[nx, ny, nz],
     lower_bound=[-x_size/2, -y_size/2, -z_size/2],
     upper_bound=[x_size/2, y_size/2, z_size/2],
-    lower_boundary_conditions=['open', 'open', 'open'],
-    upper_boundary_conditions=['open', 'open', 'open'],
-    warpx_max_grid_size_x=nx,
-    warpx_max_grid_size_y=ny,
-    warpx_max_grid_size_z=nz,
+    lower_boundary_conditions=['dirichlet', 'dirichlet', 'open'],
+    upper_boundary_conditions=['dirichlet', 'dirichlet', 'open'],
+    lower_boundary_conditions_particles=['absorbing', 'absorbing', 'absorbing'],
+    upper_boundary_conditions_particles=['absorbing', 'absorbing', 'absorbing'],
 )
 
 # Yee solver with PML
@@ -141,28 +141,85 @@ print(f"Horn aperture: {a*1e2:.2f} x {b*1e2:.2f} cm")
 print(f"Emitting plane z-position: {emit_horn_z_pos*1e2:.2f} cm")
 print(f"Receiving plane z-position: {recv_plane_z_pos*1e2:.2f} cm")
 
-# Define TE10 mode as a continuous source using AnalyticLaser + LaserAntenna.
+# Define TE10 mode as a continuous source using binary file laser.
+# NOTE: AnalyticLaser (parse_field_function) crashes on GPU in this build.
+# Workaround: pre-compute the TE10 field E(x,y,t) and write a binary file.
 # The laser antenna continuously injects fields at the antenna plane.
-# field_expression(X, Y, t) uses antenna-local coordinates:
-#   X is transverse (along polarization_direction x propagation_direction)
-#   Y is transverse (along polarization_direction)
-# For propagation in +z with polarization in y:
-#   X -> x (local), Y -> y (local)
-# TE10 transverse profile: sin(pi*(X + a/2)/a) gated to the aperture
-emit_laser = picmi.AnalyticLaser(
-    wavelength=wavelength,
-    Emax=E0,
-    propagation_direction=[0, 0, 1],
-    polarization_direction=[0, 1, 0],  # E_y polarized
-    fill_in=False,  # No moving window
-    field_expression=f"sin(pi*(X + {a/2})/{a}) * "
-                     f"(abs(X) <= {horn_half_width_x}) * "
-                     f"(abs(Y) <= {horn_half_width_y})",
-)
-emit_antenna = picmi.LaserAntenna(
-    position=[emit_horn_x_center, emit_horn_y_center, emit_horn_z_pos],
-    normal_vector=[0, 0, 1],
-)
+# Antenna-local coordinates: X is along x, Y is along y (for prop in z, pol in y).
+# TE10 transverse profile: sin(pi*(X + a/2)/a) gated to the aperture.
+
+import struct
+import os
+
+# Generate binary file for laser injection
+# Binary format: flag(1B) + nt(4B) + nx(4B) + ny(4B) + t_range(2*8B) + x_range(2*8B) + y_range(2*8B) + data(nt*nx*ny*8B)
+# Field values are normalized by e_max, so we set e_max=E0 and store shape only.
+
+binary_laser_file = 'te10_laser_profile.bin'
+
+# Grid for the laser profile (antenna-local coordinates)
+# Cover the full transverse domain so laser particles span the antenna plane
+laser_nx = 256
+laser_ny = 256
+# Use enough time samples to resolve the Gaussian ramp-up
+ramp_periods = 10  # Ramp up over 10 RF periods
+T_rf = 1.0 / freq
+ramp_time = ramp_periods * T_rf
+laser_nt = 256  # Enough samples to resolve the Gaussian envelope
+
+# Transverse extent: cover the full domain
+laser_x_min = -x_size / 2
+laser_x_max = x_size / 2
+laser_y_min = -y_size / 2
+laser_y_max = y_size / 2
+
+# Time range: span the full simulation
+laser_t_min = 0.0
+laser_t_max = 2000 * dt  # Well beyond max_steps * dt
+
+laser_x = np.linspace(laser_x_min, laser_x_max, laser_nx)
+laser_y = np.linspace(laser_y_min, laser_y_max, laser_ny)
+laser_t = np.linspace(laser_t_min, laser_t_max, laser_nt)
+
+# Build the TE10 spatial profile: sin(pi*(x + a/2)/a) gated to aperture
+profile_xy = np.zeros((laser_nx, laser_ny), dtype=np.float64)
+for ix, xv in enumerate(laser_x):
+    for iy, yv in enumerate(laser_y):
+        if abs(xv) <= horn_half_width_x and abs(yv) <= horn_half_width_y:
+            profile_xy[ix, iy] = np.sin(np.pi * (xv + a/2) / a)
+
+# Gaussian ramp-up envelope: 1 - exp(-(t/tau)^2), reaches ~1 after ramp_time
+# tau chosen so envelope is ~0.99 at t = ramp_time
+tau = ramp_time / 2.15  # 2.15 sigma gives ~99% amplitude
+envelope = np.where(laser_t < ramp_time,
+                    1.0 - np.exp(-(laser_t / tau)**2),
+                    1.0)
+
+# Combined profile: spatial × temporal envelope
+# Normalized by E0 since e_max = E0 in the laser definition
+profile = np.zeros((laser_nt, laser_nx, laser_ny), dtype=np.float64)
+for it in range(laser_nt):
+    profile[it, :, :] = envelope[it] * profile_xy
+
+print(f"Gaussian ramp-up: {ramp_periods} RF periods ({ramp_time*1e12:.1f} ps)")
+print(f"Laser binary file: {laser_nx} x {laser_ny} x {laser_nt}, max profile = {profile.max():.4f}")
+
+# Write binary file
+with open(binary_laser_file, 'wb') as f:
+    f.write(struct.pack('B', 1))  # flag: uniform grid
+    f.write(struct.pack('I', laser_nt))
+    f.write(struct.pack('I', laser_nx))
+    f.write(struct.pack('I', laser_ny))
+    f.write(struct.pack('dd', laser_t_min, laser_t_max))
+    f.write(struct.pack('dd', laser_x_min, laser_x_max))
+    f.write(struct.pack('dd', laser_y_min, laser_y_max))
+    f.write(profile.tobytes())  # nt is slowest, then nx, then ny
+
+print(f"Wrote {binary_laser_file} ({os.path.getsize(binary_laser_file)} bytes)")
+
+# We'll configure the laser via low-level pywarpx after initialize_inputs
+# since PICMI doesn't directly support from_file laser profiles.
+emit_antenna_position = [emit_horn_x_center, emit_horn_y_center, emit_horn_z_pos]
 
 # Diagnostic plane at receiving horn location (Full 3D diagnostic)
 # Records E and B fields at EVERY time step (period=1)
@@ -210,7 +267,7 @@ field_diag = picmi.FieldDiagnostic(
     name='fields',
     grid=grid,
     period=100,
-    data_list=['E', 'B', 'eb_covered'],  # Added eb_covered to visualize embedded boundary
+    data_list=['E', 'B'],
     write_dir='./diags',
     warpx_format='openpmd',
     warpx_openpmd_backend='h5',
@@ -229,16 +286,7 @@ field_energy_diag = picmi.ReducedDiagnostic(
     period=10,
 )
 
-# Create embedded boundary from STL file
-# Replace 'embedded_object.stl' with your actual STL file path
-embedded_boundary = picmi.EmbeddedBoundary(
-    stl_file='./stl_input/cleaned_mwi_horns.STL',
-    cover_multiple_cuts=True,  # Handle complex geometry with features smaller than grid
-    # Optional parameters:
-    # stl_scale=1.0,  # Scale factor for STL geometry
-    # stl_center=[0, 0, 0],  # Translation vector (meters)
-    # stl_reverse_normal=False,  # Invert orientation
-)
+# No embedded boundary needed - PEC domain boundaries act as waveguide walls
 
 # Create simulation
 sim = picmi.Simulation(
@@ -246,11 +294,7 @@ sim = picmi.Simulation(
     #time_step_size=dt,
     max_steps=1000,
     verbose=1,
-    warpx_embedded_boundary=embedded_boundary,
 )
-
-# Add emitting laser antenna source
-sim.add_laser(emit_laser, injection_method=emit_antenna)
 
 # Add diagnostics
 sim.add_diagnostic(field_diag)  # Full domain, periodic (with eb_covered)
@@ -262,24 +306,39 @@ sim.add_diagnostic(field_energy_diag)  # Reduced diagnostic
 # Write input file or run simulation
 if __name__ == "__main__":
     import sys
+    import pywarpx
     
     # FieldProbe requires algo.particle_shape for interpolation.
-    # It must be set before initialization. Otherwise, we currently have no other 
-    # particles in the simulation which would set the parameter by default.
-    import pywarpx
     pywarpx.algo.particle_shape = 1
 
     pywarpx.amrex.the_arena_is_managed = 0
     pywarpx.amrex.the_arena_init_size = 0  # Let AMReX use all available GPU memory
-    
+
+    # Configure laser directly via pywarpx (bypass PICMI AnalyticLaser GPU bug)
+    pywarpx.lasers.names = ['laser1']
+    laser = pywarpx.Lasers.newlaser('laser1')
+    laser.profile = 'from_file'
+    laser.position = emit_antenna_position
+    laser.direction = [0, 0, 1]
+    laser.polarization = [0, 1, 0]
+    laser.e_max = E0
+    laser.wavelength = wavelength
+    laser.binary_file_name = binary_laser_file
+    laser.do_continuous_injection = 0
+
     if '--write-inputs' in sys.argv:
-        # Write input file for compiled WarpX
         sim.write_input_file(file_name='inputs_from_picmi')
         print("\nInput file written to 'inputs_from_picmi'")
     else:
-        # Run with libwarpx
         print("\nInitializing inputs...", flush=True)
         sim.initialize_inputs()
+
+        # Enable ADIOS2 BP5 asynchronous writing for receiving plane diagnostic
+        # so simulation doesn't block on I/O. Uses host RAM as buffer.
+        recv_bucket = pywarpx.diagnostics._diagnostics_dict['receiving_plane']
+        recv_bucket.add_new_group_attr('adios2_engine', 'parameters.AsyncWrite', 'on')
+        recv_bucket.add_new_group_attr('adios2_engine', 'parameters.BufferChunkSize', str(32*1024*1024*1024))
+
         print("\nInitializing WarpX...", flush=True)
         sim.initialize_warpx()
         print("\nStarting simulation...", flush=True)
