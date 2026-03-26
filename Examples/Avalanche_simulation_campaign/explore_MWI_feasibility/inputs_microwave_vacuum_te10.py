@@ -135,34 +135,93 @@ beta = np.sqrt(k0**2 - (np.pi/a)**2)
 Z_TE10 = omega * mu0 / beta
 H0 = E0 / Z_TE10
 
+# Number of guide wavelengths to propagate through the waveguide
+n_guide_wavelengths = 20
+
+# Guide wavelength and group velocity
+wavelength_guide = 2 * np.pi / beta
+vg = c * np.sqrt(1 - (fc_te10 / freq)**2)
+
+# Time for n guide wavelengths to traverse at group velocity
+propagation_time = n_guide_wavelengths * wavelength_guide / vg
+
+# Convert to steps (using CFL-determined dt)
+dt_cfl = cfl / (c * np.sqrt(1/dx**2 + 1/dy**2 + 1/dz**2))
+max_steps = int(np.ceil(propagation_time / dt_cfl))
+print(f"Time step: {dt_cfl:.3e} s (omega*dt = {omega*dt_cfl:.3f})")
+
+print(f"Guide wavelength: {wavelength_guide*1e3:.3f} mm")
+print(f"Group velocity: {vg/c:.3f} c")
+print(f"Propagation time for {n_guide_wavelengths} \u03bbg: {propagation_time*1e9:.3f} ns")
+print(f"max_steps: {max_steps}")
+
 print(f"TE10 guide wavelength: {2*np.pi/beta*1e2:.2f} cm")
 print(f"TE10 impedance: {Z_TE10:.1f} Ohm")
 print(f"Horn aperture: {a*1e2:.2f} x {b*1e2:.2f} cm")
 print(f"Emitting plane z-position: {emit_horn_z_pos*1e2:.2f} cm")
 print(f"Receiving plane z-position: {recv_plane_z_pos*1e2:.2f} cm")
 
-# Define TE10 mode as a continuous source using AnalyticLaser + LaserAntenna.
-# The laser antenna continuously injects fields at the antenna plane.
-# field_expression(X, Y, t) uses antenna-local coordinates:
-#   X is transverse (along polarization_direction x propagation_direction)
-#   Y is transverse (along polarization_direction)
-# For propagation in +z with polarization in y:
-#   X -> x (local), Y -> y (local)
-# TE10 transverse profile: sin(pi*(X + a/2)/a) gated to the aperture
-emit_laser = picmi.AnalyticLaser(
+# Generate LASY file for laser injection
+# LASY stores the complex envelope; WarpX adds the carrier oscillation cos(omega*t)
+# automatically using the wavelength parameter.
+
+from lasy.laser import Laser
+from lasy.profiles.profile import Profile
+
+# Gaussian ramp-up parameters
+ramp_periods = 20  # Ramp up over 20 RF periods
+T_rf = 1.0 / freq
+ramp_time = ramp_periods * T_rf
+tau = ramp_time / 2.15  # ~99% amplitude at t = ramp_time
+
+class TE10Profile(Profile):
+    """TE10 waveguide mode profile with Gaussian ramp-up envelope."""
+    def __init__(self, wavelength, pol, E0, a_wg, ramp_time, tau):
+        super().__init__(wavelength, pol)
+        self.E0 = E0
+        self.a_wg = a_wg
+        self.ramp_time = ramp_time
+        self.tau = tau
+
+    def evaluate(self, x, y, t):
+        spatial = self.E0 * np.cos(np.pi * x / self.a_wg)
+        envelope = np.where(t < self.ramp_time,
+                            1.0 - np.exp(-(t / self.tau)**2),
+                            1.0)
+        return (spatial * envelope).astype(complex)
+
+te10_profile = TE10Profile(
     wavelength=wavelength,
-    Emax=E0,
-    propagation_direction=[0, 0, 1],
-    polarization_direction=[0, 1, 0],  # E_y polarized
-    fill_in=False,  # No moving window
-    field_expression=f"sin(pi*(X + {a/2})/{a}) * "
-                     f"(abs(X) <= {horn_half_width_x}) * "
-                     f"(abs(Y) <= {horn_half_width_y})",
+    pol=(0, 1),  # Ey polarization
+    E0=E0,
+    a_wg=a,
+    ramp_time=ramp_time,
+    tau=tau,
 )
-emit_antenna = picmi.LaserAntenna(
-    position=[emit_horn_x_center, emit_horn_y_center, emit_horn_z_pos],
-    normal_vector=[0, 0, 1],
+
+# LASY grid: match simulation transverse resolution, time covers ramp then CW
+laser_nx = nx
+laser_ny = ny
+laser_t_max = max_steps * dt_cfl * 1.1
+samples_during_ramp = max(64, int(ramp_periods * 10))
+laser_nt = samples_during_ramp + 2
+
+lasy_laser = Laser(
+    dim='xyt',
+    lo=[-x_size/2, -y_size/2, 0.0],
+    hi=[x_size/2, y_size/2, laser_t_max],
+    npoints=(laser_nx, laser_ny, laser_nt),
+    profile=te10_profile,
 )
+
+lasy_file = 'te10_laser_profile'
+lasy_laser.write_to_file(file_prefix=lasy_file, file_format='h5')
+lasy_file_path = f'diags/{lasy_file}_00000.h5'
+print(f"Wrote LASY file: {lasy_file_path}")
+print(f"Gaussian ramp-up: {ramp_periods} RF periods ({ramp_time*1e12:.1f} ps)")
+print(f"LASY grid: {laser_nx} x {laser_ny} x {laser_nt}, t_max = {laser_t_max*1e9:.3f} ns")
+
+emit_antenna_position = [emit_horn_x_center, emit_horn_y_center, emit_horn_z_pos]
 
 # Diagnostic plane at receiving horn location (Full 3D diagnostic)
 # Records E and B fields at EVERY time step (period=1)
@@ -244,13 +303,10 @@ embedded_boundary = picmi.EmbeddedBoundary(
 sim = picmi.Simulation(
     solver=solver,
     #time_step_size=dt,
-    max_steps=1000,
+    max_steps=max_steps,
     verbose=1,
     warpx_embedded_boundary=embedded_boundary,
 )
-
-# Add emitting laser antenna source
-sim.add_laser(emit_laser, injection_method=emit_antenna)
 
 # Add diagnostics
 sim.add_diagnostic(field_diag)  # Full domain, periodic (with eb_covered)
@@ -264,22 +320,37 @@ if __name__ == "__main__":
     import sys
     
     # FieldProbe requires algo.particle_shape for interpolation.
-    # It must be set before initialization. Otherwise, we currently have no other 
-    # particles in the simulation which would set the parameter by default.
     import pywarpx
     pywarpx.algo.particle_shape = 1
 
     pywarpx.amrex.the_arena_is_managed = 0
     pywarpx.amrex.the_arena_init_size = 0  # Let AMReX use all available GPU memory
-    
+
+    # Configure laser via low-level pywarpx (bypasses AnalyticLaser GPU bug)
+    # Uses LASY file: stores complex envelope, WarpX adds carrier oscillation
+    pywarpx.lasers.names = ['laser1']
+    laser = pywarpx.Lasers.newlaser('laser1')
+    laser.profile = 'from_file'
+    laser.position = emit_antenna_position
+    laser.direction = [0, 0, 1]
+    laser.polarization = [0, 1, 0]
+    laser.e_max = E0
+    laser.wavelength = wavelength
+    laser.lasy_file_name = lasy_file_path
+    laser.do_continuous_injection = 0
+
     if '--write-inputs' in sys.argv:
-        # Write input file for compiled WarpX
         sim.write_input_file(file_name='inputs_from_picmi')
         print("\nInput file written to 'inputs_from_picmi'")
     else:
-        # Run with libwarpx
         print("\nInitializing inputs...", flush=True)
         sim.initialize_inputs()
+
+        # Enable ADIOS2 BP5 asynchronous writing for receiving plane diagnostic
+        recv_bucket = pywarpx.diagnostics._diagnostics_dict['receiving_plane']
+        recv_bucket.add_new_group_attr('adios2_engine', 'parameters.AsyncWrite', 'on')
+        recv_bucket.add_new_group_attr('adios2_engine', 'parameters.BufferChunkSize', str(32*1024*1024*1024))
+
         print("\nInitializing WarpX...", flush=True)
         sim.initialize_warpx()
         print("\nStarting simulation...", flush=True)

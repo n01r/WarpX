@@ -135,91 +135,95 @@ beta = np.sqrt(k0**2 - (np.pi/a)**2)
 Z_TE10 = omega * mu0 / beta
 H0 = E0 / Z_TE10
 
+# Number of guide wavelengths to propagate through the waveguide
+n_guide_wavelengths = 20
+
+# Guide wavelength and group velocity
+wavelength_guide = 2 * np.pi / beta
+vg = c * np.sqrt(1 - (fc_te10 / freq)**2)
+
+# Time for n guide wavelengths to traverse at group velocity
+propagation_time = n_guide_wavelengths * wavelength_guide / vg
+
+# Convert to steps (using CFL-determined dt)
+dt_cfl = cfl / (c * np.sqrt(1/dx**2 + 1/dy**2 + 1/dz**2))
+max_steps = int(np.ceil(propagation_time / dt_cfl))
+print(f"Time step: {dt_cfl:.3e} s (omega*dt = {omega*dt_cfl:.3f})")
+
+print(f"Guide wavelength: {wavelength_guide*1e3:.3f} mm")
+print(f"Group velocity: {vg/c:.3f} c")
+print(f"Propagation time for {n_guide_wavelengths} \u03bbg: {propagation_time*1e9:.3f} ns")
+print(f"max_steps: {max_steps}")
+
 print(f"TE10 guide wavelength: {2*np.pi/beta*1e2:.2f} cm")
 print(f"TE10 impedance: {Z_TE10:.1f} Ohm")
 print(f"Horn aperture: {a*1e2:.2f} x {b*1e2:.2f} cm")
 print(f"Emitting plane z-position: {emit_horn_z_pos*1e2:.2f} cm")
 print(f"Receiving plane z-position: {recv_plane_z_pos*1e2:.2f} cm")
 
-# Define TE10 mode as a continuous source using binary file laser.
-# NOTE: AnalyticLaser (parse_field_function) crashes on GPU in this build.
-# Workaround: pre-compute the TE10 field E(x,y,t) and write a binary file.
-# The laser antenna continuously injects fields at the antenna plane.
-# Antenna-local coordinates: X is along x, Y is along y (for prop in z, pol in y).
-# TE10 transverse profile: sin(pi*(X + a/2)/a) gated to the aperture.
+# Generate LASY file for laser injection
+# LASY stores the complex envelope; WarpX adds the carrier oscillation cos(omega*t)
+# automatically using the wavelength parameter. This means we only need to resolve
+# the smooth ramp-up envelope, not the 67 GHz oscillation.
 
-import struct
-import os
+from lasy.laser import Laser
+from lasy.profiles.profile import Profile
 
-# Generate binary file for laser injection
-# Binary format: flag(1B) + nt(4B) + nx(4B) + ny(4B) + t_range(2*8B) + x_range(2*8B) + y_range(2*8B) + data(nt*nx*ny*8B)
-# Field values are normalized by e_max, so we set e_max=E0 and store shape only.
-
-binary_laser_file = 'te10_laser_profile.bin'
-
-# Grid for the laser profile (antenna-local coordinates)
-# Cover the full transverse domain so laser particles span the antenna plane
-laser_nx = 256
-laser_ny = 256
-# Use enough time samples to resolve the Gaussian ramp-up
-ramp_periods = 10  # Ramp up over 10 RF periods
+# Gaussian ramp-up parameters
+ramp_periods = 20  # Ramp up over 20 RF periods
 T_rf = 1.0 / freq
 ramp_time = ramp_periods * T_rf
-laser_nt = 256  # Enough samples to resolve the Gaussian envelope
+tau = ramp_time / 2.15  # ~99% amplitude at t = ramp_time
 
-# Transverse extent: cover the full domain
-laser_x_min = -x_size / 2
-laser_x_max = x_size / 2
-laser_y_min = -y_size / 2
-laser_y_max = y_size / 2
+class TE10Profile(Profile):
+    """TE10 waveguide mode profile with Gaussian ramp-up envelope."""
+    def __init__(self, wavelength, pol, E0, a_wg, ramp_time, tau):
+        super().__init__(wavelength, pol)
+        self.E0 = E0
+        self.a_wg = a_wg
+        self.ramp_time = ramp_time
+        self.tau = tau
 
-# Time range: span the full simulation
-laser_t_min = 0.0
-laser_t_max = 2000 * dt  # Well beyond max_steps * dt
+    def evaluate(self, x, y, t):
+        # Spatial: TE10 profile cos(pi*x/a), centered at x=0
+        spatial = self.E0 * np.cos(np.pi * x / self.a_wg)
+        # Temporal: Gaussian ramp-up envelope
+        envelope = np.where(t < self.ramp_time,
+                            1.0 - np.exp(-(t / self.tau)**2),
+                            1.0)
+        return (spatial * envelope).astype(complex)
 
-laser_x = np.linspace(laser_x_min, laser_x_max, laser_nx)
-laser_y = np.linspace(laser_y_min, laser_y_max, laser_ny)
-laser_t = np.linspace(laser_t_min, laser_t_max, laser_nt)
+te10_profile = TE10Profile(
+    wavelength=wavelength,
+    pol=(0, 1),  # Ey polarization
+    E0=E0,
+    a_wg=a,
+    ramp_time=ramp_time,
+    tau=tau,
+)
 
-# Build the TE10 spatial profile: sin(pi*(x + a/2)/a) gated to aperture
-profile_xy = np.zeros((laser_nx, laser_ny), dtype=np.float64)
-for ix, xv in enumerate(laser_x):
-    for iy, yv in enumerate(laser_y):
-        if abs(xv) <= horn_half_width_x and abs(yv) <= horn_half_width_y:
-            profile_xy[ix, iy] = np.sin(np.pi * (xv + a/2) / a)
+# LASY grid: match simulation transverse resolution, time covers ramp then CW
+laser_nx = nx
+laser_ny = ny
+laser_t_max = max_steps * dt_cfl * 1.1  # 10% margin beyond simulation end
+samples_during_ramp = max(64, int(ramp_periods * 10))
+laser_nt = samples_during_ramp + 2
 
-# Gaussian ramp-up envelope: 1 - exp(-(t/tau)^2), reaches ~1 after ramp_time
-# tau chosen so envelope is ~0.99 at t = ramp_time
-tau = ramp_time / 2.15  # 2.15 sigma gives ~99% amplitude
-envelope = np.where(laser_t < ramp_time,
-                    1.0 - np.exp(-(laser_t / tau)**2),
-                    1.0)
+lasy_laser = Laser(
+    dim='xyt',
+    lo=[-x_size/2, -y_size/2, 0.0],
+    hi=[x_size/2, y_size/2, laser_t_max],
+    npoints=(laser_nx, laser_ny, laser_nt),
+    profile=te10_profile,
+)
 
-# Combined profile: spatial × temporal envelope
-# Normalized by E0 since e_max = E0 in the laser definition
-profile = np.zeros((laser_nt, laser_nx, laser_ny), dtype=np.float64)
-for it in range(laser_nt):
-    profile[it, :, :] = envelope[it] * profile_xy
-
+lasy_file = 'te10_laser_profile'
+lasy_laser.write_to_file(file_prefix=lasy_file, file_format='h5')
+lasy_file_path = f'diags/{lasy_file}_00000.h5'
+print(f"Wrote LASY file: {lasy_file_path}")
 print(f"Gaussian ramp-up: {ramp_periods} RF periods ({ramp_time*1e12:.1f} ps)")
+print(f"LASY grid: {laser_nx} x {laser_ny} x {laser_nt}, t_max = {laser_t_max*1e9:.3f} ns")
 
-print(f"Laser binary file: {laser_nx} x {laser_ny} x {laser_nt}, max profile = {profile.max():.4f}")
-
-# Write binary file
-with open(binary_laser_file, 'wb') as f:
-    f.write(struct.pack('B', 1))  # flag: uniform grid
-    f.write(struct.pack('I', laser_nt))
-    f.write(struct.pack('I', laser_nx))
-    f.write(struct.pack('I', laser_ny))
-    f.write(struct.pack('dd', laser_t_min, laser_t_max))
-    f.write(struct.pack('dd', laser_x_min, laser_x_max))
-    f.write(struct.pack('dd', laser_y_min, laser_y_max))
-    f.write(profile.tobytes())  # nt is slowest, then nx, then ny
-
-print(f"Wrote {binary_laser_file} ({os.path.getsize(binary_laser_file)} bytes)")
-
-# We'll configure the laser via low-level pywarpx after initialize_inputs
-# since PICMI doesn't directly support from_file laser profiles.
 emit_antenna_position = [emit_horn_x_center, emit_horn_y_center, emit_horn_z_pos]
 
 # Diagnostic plane at receiving horn location (Full 3D diagnostic)
@@ -308,7 +312,7 @@ embedded_boundary = picmi.EmbeddedBoundary(
 sim = picmi.Simulation(
     solver=solver,
     #time_step_size=dt,
-    max_steps=1000,
+    max_steps=max_steps,
     verbose=1,
     warpx_embedded_boundary=embedded_boundary,
 )
@@ -331,7 +335,8 @@ if __name__ == "__main__":
     pywarpx.amrex.the_arena_is_managed = 0
     pywarpx.amrex.the_arena_init_size = 0  # Let AMReX use all available GPU memory
 
-    # Configure laser directly via pywarpx (bypass PICMI AnalyticLaser GPU bug)
+    # Configure laser via low-level pywarpx (bypasses AnalyticLaser GPU bug)
+    # Uses LASY file: stores complex envelope, WarpX adds carrier oscillation
     pywarpx.lasers.names = ['laser1']
     laser = pywarpx.Lasers.newlaser('laser1')
     laser.profile = 'from_file'
@@ -340,7 +345,7 @@ if __name__ == "__main__":
     laser.polarization = [0, 1, 0]
     laser.e_max = E0
     laser.wavelength = wavelength
-    laser.binary_file_name = binary_laser_file
+    laser.lasy_file_name = lasy_file_path
     laser.do_continuous_injection = 0
 
     if '--write-inputs' in sys.argv:
