@@ -339,7 +339,8 @@ def _detect_openpmd_series_path(diag_dir, diag_name, access_override=None):
     )
 
 
-def load_plane_timeseries(diag_dir, diag_name, access_override=None):
+def load_plane_timeseries(diag_dir, diag_name, access_override=None,
+                          max_iterations=None):
     """
     Load a thin-slab FieldDiagnostic time series.  Both the variable-based
     encoding (``warpx_openpmd_encoding='v'``, single ``openpmd.<ext>`` entry)
@@ -399,6 +400,9 @@ def load_plane_timeseries(diag_dir, diag_name, access_override=None):
 
     iter_count = 0
     t_start_wall = _time.monotonic()
+    if max_iterations is not None:
+        print(f"  loader will stop after at most {max_iterations} iterations "
+              f"(--max-iterations)")
     try:
         for it in series.read_iterations():
             mesh_E = it.meshes["E"]
@@ -479,6 +483,17 @@ def load_plane_timeseries(diag_dir, diag_name, access_override=None):
                       f"(t = {float(it.time)*1e9:.3f} ns, "
                       f"elapsed {elapsed:.1f} s, "
                       f"{rate:.0f} iter/s)", flush=True)
+
+            # Early stop: cap the number of iterations to skip a problematic
+            # trailing tail of the series.  Some BP5 variable-based series
+            # written by long jobs hang in read_linear at the very end
+            # because the streaming end-of-stream marker was never written;
+            # cutting one or two trailing iterations is harmless for FFT/CW
+            # analysis and avoids the hang.
+            if max_iterations is not None and iter_count >= max_iterations:
+                print(f"    reached --max-iterations = {max_iterations}, "
+                      f"stopping series read early", flush=True)
+                break
     except Exception as exc:
         # This commonly fires on a series whose final iteration was never
         # fully flushed (WarpX crashed mid-write), especially with
@@ -678,7 +693,13 @@ def load_fieldprobe_plane_timeseries(filepath, resolution,
     span_a = coord_a[-1] - coord_a[0]
     span_b = coord_b[-1] - coord_b[0]
     a_is_broad = span_a >= span_b
-    AA, BB = np.meshgrid(coord_a, coord_b, indexing='ij')
+    # Centre on the slab midpoint so absolute probe coordinates (e.g. WG
+    # placed at y ~ 28 mm, z ~ 37 mm in the scooter geometry) compare
+    # against a/2 and b/2 correctly.
+    a_center = 0.5 * (coord_a[0] + coord_a[-1])
+    b_center = 0.5 * (coord_b[0] + coord_b[-1])
+    AA, BB = np.meshgrid(coord_a - a_center, coord_b - b_center,
+                         indexing='ij')
     broad_grid  = AA if a_is_broad else BB
     narrow_grid = BB if a_is_broad else AA
     crop_mask = ((np.abs(broad_grid)  <= a_wg / 2 + d_a) &
@@ -704,8 +725,17 @@ def te10_mode_2d(coord_a, coord_b):
     TE10 mode shape phi(u) = cos(pi*u/a) on the (Na, Nb) aperture grid.
 
     The broad wall (dimension a_wg) is identified as the aperture axis with
-    the larger coordinate span.  phi varies as a cosine across the broad wall
-    and is uniform across the narrow wall.  Zero outside the aperture rectangle.
+    the larger coordinate span.  phi varies as a cosine across the broad
+    wall and is uniform across the narrow wall.  Zero outside the aperture
+    rectangle.
+
+    The slab coordinates produced by the openPMD diagnostic are absolute
+    positions in the simulation frame, NOT centred on the waveguide axis
+    (e.g. for the scooter geometry the slab sits at y ~ 30 mm, z ~ 37 mm).
+    We auto-centre by subtracting the midpoint of each coordinate range
+    before computing phi -- the diagnostic slab is, by construction, sized
+    to the waveguide cross-section + 1 cell margin on each side, so its
+    geometric midpoint coincides with the waveguide axis.
 
     Returns
     -------
@@ -714,7 +744,12 @@ def te10_mode_2d(coord_a, coord_b):
     span_a = coord_a[-1] - coord_a[0]
     span_b = coord_b[-1] - coord_b[0]
 
-    AA, BB = np.meshgrid(coord_a, coord_b, indexing='ij')
+    a_center = 0.5 * (coord_a[0] + coord_a[-1])
+    b_center = 0.5 * (coord_b[0] + coord_b[-1])
+    coord_a_c = coord_a - a_center
+    coord_b_c = coord_b - b_center
+
+    AA, BB = np.meshgrid(coord_a_c, coord_b_c, indexing='ij')
 
     broad_grid  = AA if span_a >= span_b else BB
     narrow_grid = BB if span_a >= span_b else AA
@@ -988,10 +1023,20 @@ def cw_analysis(args, t_rec, aE_rec, aB_rec, prop_axis, E_comp, B_comp, is_compl
           f"{(t_rec[-1]-edge_buffer)*1e9:.3f}] ns  "
           f"({ss_mask.sum()} samples)")
     print(f"Reference: {ref_desc}")
+    # Wrapped phase in [-180, +180] -- this is what a real plasma
+    # interferometer reads off the lock-in.  The unwrapped value above
+    # accumulates 360-degree turns from `safe_unwrap`; the wrapped value
+    # is the unique observable.
+    phi_ss_deg          = float(np.degrees(phi_ss))
+    phi_ss_wrapped_deg  = ((phi_ss_deg + 180.0) % 360.0) - 180.0
+    n_turns_unwrap      = int(round((phi_ss_deg - phi_ss_wrapped_deg) / 360.0))
+
     print(f"\n|S21|(steady-state)  = {mag_ss:.4e} ± {mag_std:.2e}  "
           f"({20.0 * np.log10(max(mag_ss, 1e-30)):.2f} dB)")
-    print(f"Δφ  (steady-state)   = {np.degrees(phi_ss):+.3f} ± "
+    print(f"Δφ  (steady-state, unwrapped) = {phi_ss_deg:+.3f} ± "
           f"{np.degrees(phi_std):.3f} deg")
+    print(f"Δφ  (steady-state, wrapped)   = {phi_ss_wrapped_deg:+.3f} deg "
+          f"(unwrapped − {n_turns_unwrap}·360°;  experimentally observable)")
 
     # ── Line-integrated density estimate ─────────────────────────────────────
     # Under the low-density approximation for TE10 in a uniform-cross-section
@@ -1104,26 +1149,68 @@ def cw_analysis(args, t_rec, aE_rec, aB_rec, prop_axis, E_comp, B_comp, is_compl
     ax.set_title("Time-resolved phase shift Δφ(t) = arg(S21(t))")
     ax.legend(fontsize=9); ax.grid(True)
 
-    # Bottom-right: IQ trajectory — S21(t) in the complex plane. A lossless
-    # straight guide at f0 gives a fixed point; a plasma traversal draws an
-    # arc; reflections create circles.  Extremely useful as a sanity-check.
+    # Bottom-right: IQ trajectory — S21(t) in the complex plane.
+    # The mean point gives steady-state |S21| (radius from origin) and
+    # arg(S21) (angle from +Re axis).  The shape and motion of the trajectory
+    # around that mean reveal residual physics:
+    #   tight blob          → clean steady state, low standing wave
+    #   small arc / ellipse → standing wave at f0 (radial = |S21| ripple,
+    #                         tangential = phase ripple)
+    #   smooth arc          → slow phase drift (plasma density growth, or
+    #                         carrier-frequency mismatch between sim and f0)
+    #   spiral inward       → increasing absorption with time
+    #   spiral outward      → build-up / instability
+    # Steady-state samples are colour-coded by time so you can see the
+    # direction of motion at a glance.
     ax = axes[1, 2]
     ss = ss_mask
-    ax.plot(S21_t[ss].real, S21_t[ss].imag,
-            '.', ms=1.5, alpha=0.4, label="steady-state samples")
+    re_ss_mean = float(np.nanmean(S21_t[ss].real))
+    im_ss_mean = float(np.nanmean(S21_t[ss].imag))
+
+    # Transient cloud (faint).
     ax.plot(S21_t[~ss].real, S21_t[~ss].imag,
             '.', ms=1.0, alpha=0.15, color='0.5', label="transient")
-    # mean as a red cross
-    ax.plot(np.nanmean(S21_t[ss].real), np.nanmean(S21_t[ss].imag),
-            'rx', ms=10, mew=2, label=f"mean = {mag_ss:.2e} ∠ "
-            f"{np.degrees(phi_ss):+.1f}°")
+    # Steady-state samples coloured by time.
+    t_ss = t_rec[ss]
+    sc = ax.scatter(S21_t[ss].real, S21_t[ss].imag,
+                    c=t_ss * 1e9, cmap='viridis',
+                    s=4, alpha=0.55,
+                    label="steady-state samples")
+    cb = plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+    cb.set_label("time (ns)", fontsize=8)
+
+    # Reference circles at |S21|_ss and 2*|S21|_ss to gauge ripple amplitude.
+    theta = np.linspace(0, 2*np.pi, 361)
+    for r_mult, ls, alpha in [(1.0, '--', 0.6), (2.0, ':', 0.35)]:
+        ax.plot(r_mult * mag_ss * np.cos(theta),
+                r_mult * mag_ss * np.sin(theta),
+                color='0.4', ls=ls, lw=0.8, alpha=alpha,
+                label=(f"|S21| = {r_mult:g} · mean" if r_mult != 1 else None))
+    # Radial line from origin through the mean (zero-phase reference is +Re).
+    ax.plot([0, re_ss_mean], [0, im_ss_mean],
+            color='red', lw=0.7, alpha=0.7, ls='-')
+    # Mean point marker.  Show both the unwrapped phase used by the printout
+    # AND the wrapped phase in [-180, +180] (what a real lock-in would read).
+    ax.plot(re_ss_mean, im_ss_mean,
+            'rx', ms=10, mew=2,
+            label=(f"mean = {mag_ss:.2e}\n"
+                   f"Δφ unwrapped = {phi_ss_deg:+.1f}°\n"
+                   f"Δφ wrapped   = {phi_ss_wrapped_deg:+.2f}°"))
+
     ax.axhline(0, color='0.7', lw=0.5)
     ax.axvline(0, color='0.7', lw=0.5)
     ax.set_aspect('equal')
-    ax.set_xlabel("Re(S21)")
-    ax.set_ylabel("Im(S21)")
-    ax.set_title("S21(t) in the complex plane")
-    ax.legend(fontsize=8); ax.grid(True)
+    # Force scientific notation on both axes so |S21| ~ 1e-4 doesn't print as
+    # "0.00015" labels stacked on top of each other.  set_powerlimits=(0, 0)
+    # always uses scientific form; the shared exponent appears in the corner.
+    ax.ticklabel_format(style='sci', axis='both', scilimits=(0, 0),
+                        useMathText=True)
+    plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+    ax.set_xlabel("I = Re(S21)  =  (A_rec/A_inj)·cos(Δφ)")
+    ax.set_ylabel("Q = Im(S21)  =  (A_rec/A_inj)·sin(Δφ)")
+    ax.set_title("S21(t) in the complex plane\n"
+                 "(radius = |S21|, angle = Δφ;  colour = time)")
+    ax.legend(fontsize=7, loc='best'); ax.grid(True, alpha=0.4)
 
     fig.tight_layout()
     outfile = "s21_cw_iq_demodulation.png"
@@ -1151,6 +1238,13 @@ def main():
     parser.add_argument("--diag-dir", default="./diags",
                         help="Path to WarpX diags directory")
     parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("--max-iterations", type=int, default=None,
+                        help="Stop the series loader after at most N "
+                             "iterations.  Useful when a BP5 variable-based "
+                             "series with read_linear hangs in the very last "
+                             "step or two (no end-of-stream marker), or when "
+                             "you only need a prefix of the series.  Default: "
+                             "read every iteration.")
     parser.add_argument("--openpmd-access-mode", default="auto",
                         choices=["auto", "read_linear", "read_only"],
                         help="openPMD access mode for variable-based BP5 series.\n"
@@ -1300,7 +1394,8 @@ def main():
             diag_name = ("injection_plane" if kind == "injection"
                          else "receiving_plane")
             return load_plane_timeseries(args.diag_dir, diag_name,
-                                         access_override=access_override)
+                                         access_override=access_override,
+                                         max_iterations=args.max_iterations)
 
     # ── Load receiving plane ───────────────────────────────────────────────────────
     print(f"Loading receiving plane (source = {args.source}) ...", flush=True)

@@ -1,0 +1,64 @@
+Loading receiving plane (source = openpmd) ...
+  openPMD series: diags/receiving_plane/openpmd.bp5
+  openPMD encoding: variable-based (.bp5)
+  openPMD access mode: read_linear
+  loader will stop after at most 14950 iterations (--max-iterations)
+  axis_labels (array dim -> physical): ['z', 'y', 'x']
+  Physical spans: z=2.66 mm, y=4.44 mm, x=0.45 mm
+  Thin dim: array axis 2 = physical 'x' -> propagation axis X
+  Aperture array dims: [0, 1] = physical ZY
+  Using E component: Ez  paired B component: By
+    read 1 iterations  (t = 0.000 ns, elapsed 0.0 s, 86 iter/s)
+    read 500 iterations  (t = 0.213 ns, elapsed 0.2 s, 2576 iter/s)
+    read 1000 iterations  (t = 0.426 ns, elapsed 0.4 s, 2798 iter/s)
+    read 1500 iterations  (t = 0.639 ns, elapsed 0.5 s, 2861 iter/s)
+    read 2000 iterations  (t = 0.852 ns, elapsed 0.7 s, 2859 iter/s)
+    read 2500 iterations  (t = 1.065 ns, elapsed 0.9 s, 2876 iter/s)
+    read 3000 iterations  (t = 1.278 ns, elapsed 1.0 s, 2887 iter/s)
+    read 3500 iterations  (t = 1.491 ns, elapsed 1.2 s, 2899 iter/s)
+    read 4000 iterations  (t = 1.704 ns, elapsed 1.4 s, 2893 iter/s)
+    read 4500 iterations  (t = 1.917 ns, elapsed 1.6 s, 2898 iter/s)
+    read 5000 iterations  (t = 2.131 ns, elapsed 1.7 s, 2900 iter/s)
+    read 5500 iterations  (t = 2.344 ns, elapsed 1.9 s, 2890 iter/s)
+    read 6000 iterations  (t = 2.557 ns, elapsed 2.1 s, 2884 iter/s)
+    read 6500 iterations  (t = 2.770 ns, elapsed 2.3 s, 2875 iter/s)
+    read 7000 iterations  (t = 2.983 ns, elapsed 2.4 s, 2859 iter/s)
+    read 7500 iterations  (t = 3.196 ns, elapsed 2.6 s, 2844 iter/s)
+    read 8000 iterations  (t = 3.409 ns, elapsed 2.8 s, 2837 iter/s)
+    read 8500 iterations  (t = 3.622 ns, elapsed 3.0 s, 2833 iter/s)
+    read 9000 iterations  (t = 3.835 ns, elapsed 3.2 s, 2828 iter/s)
+    read 9500 iterations  (t = 4.048 ns, elapsed 3.4 s, 2820 iter/s)
+    read 10000 iterations  (t = 4.262 ns, elapsed 3.6 s, 2816 iter/s)
+    read 10500 iterations  (t = 4.475 ns, elapsed 3.7 s, 2813 iter/s)
+    read 11000 iterations  (t = 4.688 ns, elapsed 3.9 s, 2807 iter/s)
+    read 11500 iterations  (t = 4.901 ns, elapsed 4.1 s, 2804 iter/s)
+    read 12000 iterations  (t = 5.114 ns, elapsed 4.3 s, 2799 iter/s)
+    read 12500 iterations  (t = 5.327 ns, elapsed 4.5 s, 2794 iter/s)
+    read 13000 iterations  (t = 5.540 ns, elapsed 4.7 s, 2786 iter/s)
+    read 13500 iterations  (t = 5.753 ns, elapsed 4.9 s, 2779 iter/s)
+    read 14000 iterations  (t = 5.966 ns, elapsed 5.0 s, 2774 iter/s)
+    read 14500 iterations  (t = 6.180 ns, elapsed 5.2 s, 2766 iter/s)
+    reached --max-iterations = 14950, stopping series read early
+  done: 14950 iterations read in 5.4 s (2758 iter/s)
+  14950 steps,  dt = 4.2620e-13 s,  t ∈ [0.0000, 6.3713] ns
+  peak |a_E_rec| = 2.2138e+02 V/m,  peak |a_B_rec| = 1.0779e-05 T
+
+=== CW mode ===
+  auto cw-t-start = 3*L/v_g = 3.130 ns
+  auto cw-lpf-cutoff = 0.1 * f0 = 6.700 GHz
+
+I/Q demodulating at f0 = 67.000 GHz, LPF cutoff 6.700 GHz, order 6
+
+Steady-state window: t ∈ [3.130, 6.341] ns  (7535 samples)
+Reference: analytic CW at emitter frame  (E0=1.00e+06 V/m, f0=67.00 GHz)
+
+|S21|(steady-state)  = 1.5515e-04 ± 2.14e-05  (-76.19 dB)
+Δφ  (steady-state)   = +2305.587 ± 1.725 deg
+
+Carrier ω0 = 2π·67.00 GHz,  n_crit = 5.568e+19 m⁻³
+Low-density line-integrated n_e estimate from Δφ:
+  <n_e>·d ≈ 3.191e+18 m⁻²     (vacuum run: should be ~0; any non-zero value is the reflection/standing-wave noise floor).
+
+Figure saved: s21_cw_iq_demodulation.png
+/home/mgarten/src/warpx/Examples/Avalanche_simulation_campaign/explore_MWI_feasibility/scooter_central_section/scooter_section_16x40GB_70ns_continuous_wave/analysis/analyze_s21_directional_splitting.py:1167: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+  plt.show()
