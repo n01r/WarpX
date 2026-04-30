@@ -1,0 +1,140 @@
+Loading receiving plane (source = openpmd) ...
+  openPMD series: ../diags/receiving_plane/openpmd.bp5
+  openPMD encoding: variable-based (.bp5)
+  openPMD access mode: read_linear
+  axis_labels (array dim -> physical): ['z', 'y', 'x']
+  Physical spans: z=0.47 mm, y=2.58 mm, x=4.23 mm
+  Thin dim: array axis 0 = physical 'z' -> propagation axis Z
+  Aperture array dims: [1, 2] = physical YX
+  Using E component: Ey  paired B component: Bx
+    read 1 iterations  (t = 0.000 ns, elapsed 0.0 s, 24 iter/s)
+    read 500 iterations  (t = 0.225 ns, elapsed 0.6 s, 782 iter/s)
+    read 1000 iterations  (t = 0.450 ns, elapsed 1.2 s, 823 iter/s)
+    read 1500 iterations  (t = 0.675 ns, elapsed 1.8 s, 826 iter/s)
+    read 2000 iterations  (t = 0.900 ns, elapsed 2.4 s, 839 iter/s)
+    read 2500 iterations  (t = 1.125 ns, elapsed 3.0 s, 844 iter/s)
+    read 3000 iterations  (t = 1.350 ns, elapsed 3.6 s, 836 iter/s)
+    read 3500 iterations  (t = 1.575 ns, elapsed 4.3 s, 813 iter/s)
+    read 4000 iterations  (t = 1.800 ns, elapsed 5.0 s, 804 iter/s)
+    read 4500 iterations  (t = 2.026 ns, elapsed 5.6 s, 808 iter/s)
+    read 5000 iterations  (t = 2.251 ns, elapsed 6.2 s, 809 iter/s)
+    read 5500 iterations  (t = 2.476 ns, elapsed 6.8 s, 813 iter/s)
+    read 6000 iterations  (t = 2.701 ns, elapsed 7.4 s, 812 iter/s)
+    read 6500 iterations  (t = 2.926 ns, elapsed 8.0 s, 813 iter/s)
+    read 7000 iterations  (t = 3.151 ns, elapsed 8.6 s, 814 iter/s)
+    read 7500 iterations  (t = 3.376 ns, elapsed 9.3 s, 811 iter/s)
+    read 8000 iterations  (t = 3.601 ns, elapsed 9.9 s, 810 iter/s)
+    read 8500 iterations  (t = 3.826 ns, elapsed 10.5 s, 813 iter/s)
+    read 9000 iterations  (t = 4.051 ns, elapsed 11.1 s, 814 iter/s)
+    read 9500 iterations  (t = 4.277 ns, elapsed 11.6 s, 815 iter/s)
+    read 10000 iterations  (t = 4.502 ns, elapsed 12.2 s, 816 iter/s)
+    read 10500 iterations  (t = 4.727 ns, elapsed 12.9 s, 813 iter/s)
+    read 11000 iterations  (t = 4.952 ns, elapsed 13.5 s, 815 iter/s)
+    read 11500 iterations  (t = 5.177 ns, elapsed 14.1 s, 818 iter/s)
+    read 12000 iterations  (t = 5.402 ns, elapsed 14.6 s, 819 iter/s)
+    read 12500 iterations  (t = 5.627 ns, elapsed 15.2 s, 821 iter/s)
+    read 13000 iterations  (t = 5.852 ns, elapsed 15.8 s, 823 iter/s)
+    read 13500 iterations  (t = 6.077 ns, elapsed 16.4 s, 825 iter/s)
+    read 14000 iterations  (t = 6.303 ns, elapsed 16.9 s, 827 iter/s)
+    read 14500 iterations  (t = 6.528 ns, elapsed 17.5 s, 827 iter/s)
+    read 15000 iterations  (t = 6.753 ns, elapsed 18.1 s, 829 iter/s)
+    read 15500 iterations  (t = 6.978 ns, elapsed 18.7 s, 830 iter/s)
+    read 16000 iterations  (t = 7.203 ns, elapsed 19.2 s, 831 iter/s)
+    read 16500 iterations  (t = 7.428 ns, elapsed 19.8 s, 832 iter/s)
+    read 17000 iterations  (t = 7.653 ns, elapsed 20.4 s, 833 iter/s)
+    read 17500 iterations  (t = 7.878 ns, elapsed 21.0 s, 835 iter/s)
+    read 18000 iterations  (t = 8.103 ns, elapsed 21.5 s, 837 iter/s)
+    read 18500 iterations  (t = 8.328 ns, elapsed 22.1 s, 838 iter/s)
+    read 19000 iterations  (t = 8.554 ns, elapsed 22.7 s, 836 iter/s)
+    read 19500 iterations  (t = 8.779 ns, elapsed 23.4 s, 833 iter/s)
+    read 20000 iterations  (t = 9.004 ns, elapsed 24.2 s, 828 iter/s)
+    read 20500 iterations  (t = 9.229 ns, elapsed 24.8 s, 825 iter/s)
+    read 21000 iterations  (t = 9.454 ns, elapsed 25.6 s, 819 iter/s)
+    read 21500 iterations  (t = 9.679 ns, elapsed 26.2 s, 820 iter/s)
+    read 22000 iterations  (t = 9.904 ns, elapsed 26.8 s, 821 iter/s)
+  done: 22213 iterations read in 27.0 s (822 iter/s)
+  22213 steps,  dt = 4.5021e-13 s,  t ∈ [0.0000, 10.0001] ns
+  peak |a_E_rec| = 1.7551e+39 V/m,  peak |a_B_rec| = 3.8547e+30 T
+Loading injection plane (source = openpmd) ...
+  openPMD series: ../diags/injection_plane/openpmd.bp5
+  openPMD encoding: variable-based (.bp5)
+  openPMD access mode: read_linear
+  axis_labels (array dim -> physical): ['z', 'y', 'x']
+  Physical spans: z=0.47 mm, y=2.58 mm, x=4.23 mm
+  Thin dim: array axis 0 = physical 'z' -> propagation axis Z
+  Aperture array dims: [1, 2] = physical YX
+  Using E component: Ey  paired B component: Bx
+    read 1 iterations  (t = 0.000 ns, elapsed 0.1 s, 18 iter/s)
+    read 500 iterations  (t = 0.225 ns, elapsed 0.6 s, 826 iter/s)
+    read 1000 iterations  (t = 0.450 ns, elapsed 1.2 s, 848 iter/s)
+    read 1500 iterations  (t = 0.675 ns, elapsed 1.8 s, 852 iter/s)
+    read 2000 iterations  (t = 0.900 ns, elapsed 2.3 s, 857 iter/s)
+    read 2500 iterations  (t = 1.125 ns, elapsed 2.9 s, 863 iter/s)
+    read 3000 iterations  (t = 1.350 ns, elapsed 3.5 s, 850 iter/s)
+    read 3500 iterations  (t = 1.575 ns, elapsed 4.3 s, 811 iter/s)
+    read 4000 iterations  (t = 1.800 ns, elapsed 5.0 s, 805 iter/s)
+    read 4500 iterations  (t = 2.026 ns, elapsed 5.7 s, 792 iter/s)
+    read 5000 iterations  (t = 2.251 ns, elapsed 6.2 s, 800 iter/s)
+    read 5500 iterations  (t = 2.476 ns, elapsed 6.9 s, 802 iter/s)
+    read 6000 iterations  (t = 2.701 ns, elapsed 7.4 s, 809 iter/s)
+    read 6500 iterations  (t = 2.926 ns, elapsed 8.0 s, 811 iter/s)
+    read 7000 iterations  (t = 3.151 ns, elapsed 8.6 s, 818 iter/s)
+    read 7500 iterations  (t = 3.376 ns, elapsed 9.1 s, 823 iter/s)
+    read 8000 iterations  (t = 3.601 ns, elapsed 9.7 s, 826 iter/s)
+    read 8500 iterations  (t = 3.826 ns, elapsed 10.3 s, 826 iter/s)
+    read 9000 iterations  (t = 4.051 ns, elapsed 10.9 s, 828 iter/s)
+    read 9500 iterations  (t = 4.277 ns, elapsed 11.5 s, 828 iter/s)
+    read 10000 iterations  (t = 4.502 ns, elapsed 12.1 s, 829 iter/s)
+    read 10500 iterations  (t = 4.727 ns, elapsed 12.7 s, 827 iter/s)
+    read 11000 iterations  (t = 4.952 ns, elapsed 13.3 s, 829 iter/s)
+    read 11500 iterations  (t = 5.177 ns, elapsed 13.8 s, 831 iter/s)
+    read 12000 iterations  (t = 5.402 ns, elapsed 14.4 s, 831 iter/s)
+    read 12500 iterations  (t = 5.627 ns, elapsed 15.1 s, 829 iter/s)
+    read 13000 iterations  (t = 5.852 ns, elapsed 15.7 s, 830 iter/s)
+    read 13500 iterations  (t = 6.077 ns, elapsed 16.3 s, 830 iter/s)
+    read 14000 iterations  (t = 6.303 ns, elapsed 16.8 s, 831 iter/s)
+    read 14500 iterations  (t = 6.528 ns, elapsed 17.4 s, 831 iter/s)
+    read 15000 iterations  (t = 6.753 ns, elapsed 18.2 s, 824 iter/s)
+    read 15500 iterations  (t = 6.978 ns, elapsed 18.9 s, 820 iter/s)
+    read 16000 iterations  (t = 7.203 ns, elapsed 19.5 s, 821 iter/s)
+    read 16500 iterations  (t = 7.428 ns, elapsed 20.1 s, 821 iter/s)
+    read 17000 iterations  (t = 7.653 ns, elapsed 20.7 s, 819 iter/s)
+    read 17500 iterations  (t = 7.878 ns, elapsed 21.3 s, 820 iter/s)
+    read 18000 iterations  (t = 8.103 ns, elapsed 21.9 s, 820 iter/s)
+    read 18500 iterations  (t = 8.328 ns, elapsed 22.6 s, 819 iter/s)
+    read 19000 iterations  (t = 8.554 ns, elapsed 23.2 s, 817 iter/s)
+    read 19500 iterations  (t = 8.779 ns, elapsed 23.8 s, 819 iter/s)
+    read 20000 iterations  (t = 9.004 ns, elapsed 24.4 s, 820 iter/s)
+    read 20500 iterations  (t = 9.229 ns, elapsed 25.0 s, 821 iter/s)
+    read 21000 iterations  (t = 9.454 ns, elapsed 25.6 s, 822 iter/s)
+    read 21500 iterations  (t = 9.679 ns, elapsed 26.2 s, 820 iter/s)
+    read 22000 iterations  (t = 9.904 ns, elapsed 26.9 s, 817 iter/s)
+  done: 22213 iterations read in 27.3 s (815 iter/s)
+  22213 steps,  dt = 4.5021e-13 s,  t ∈ [0.0000, 10.0001] ns
+  peak |a_E_inj| = 4.9396e+48 V/m,  peak |a_B_inj| = 1.1267e+40 T
+
+Propagation axis: Z,  L = 24.86300 cm
+TE10 cutoff = 39.875 GHz
+Window: none
+Geometry: straight  (straight-guide analytic IS the expected answer)
+
+Directional S21 = A_+_recv / A_+_inj,  errors in [60, 74] GHz (8960 freq points):
+  |S21| error  max = 1.00e+00  RMS = 1.00e+00
+  Phase error  max = 5243.9513 deg  RMS = 3076.4992 deg
+
+Naive E-only S21 for comparison:
+  |S21| error  max = 1.00e+00  RMS = 1.00e+00
+
+Reflection diagnostics (from directional split):
+  |S11|_inj  mean = 1.565e-01  max = 1.690e-01
+  |S22|_recv mean = 7.307e+00  max = 9.291e+00
+
+=== S21 at carrier f0 = 67.000 GHz (nearest bin 66.9994 GHz, offset -0.642 MHz) ===
+  |S21|(f0)         = 7.139241e-11  (-202.927 dB)
+  arg(S21)(f0)      = -47.2809 deg   (wrapped to [-180, +180])
+  arg(S21_ref)(f0)  = +124.8588 deg   (straight-guide analytic reference)
+  Δφ_wrapped(f0)    = -172.1397 deg   (arg(S21_sim / S21_ref), wrapped)
+  |S11|(f0)_inj     = 1.5798e-01
+  |S22|(f0)_recv    = 7.1106e+00
+
+Figure saved: s21_validation_directional_splitting.png

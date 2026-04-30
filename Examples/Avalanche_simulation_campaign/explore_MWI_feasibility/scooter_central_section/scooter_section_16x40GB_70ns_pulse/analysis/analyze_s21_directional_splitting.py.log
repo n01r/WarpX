@@ -1,0 +1,88 @@
+Loading receiving plane (source = openpmd) ...
+  openPMD series: ../diags/receiving_plane/openpmd.bp5
+  openPMD encoding: variable-based (.bp5)
+  openPMD access mode: read_linear
+  loader will stop after at most 14983 iterations (--max-iterations)
+  axis_labels (array dim -> physical): ['z', 'y', 'x']
+  Physical spans: z=2.66 mm, y=4.44 mm, x=0.45 mm
+  Thin dim: array axis 2 = physical 'x' -> propagation axis X
+  Aperture array dims: [0, 1] = physical ZY
+  Using E component: Ez  paired B component: By
+  Receiver-plane centerline: X = 13.72768 cm (slab thickness = 2 cells)
+    read 1 iterations  (t = 0.000 ns, elapsed 0.2 s, 5 iter/s)
+    read 500 iterations  (t = 0.213 ns, elapsed 1.0 s, 514 iter/s)
+    read 1000 iterations  (t = 0.426 ns, elapsed 1.7 s, 594 iter/s)
+    read 1500 iterations  (t = 0.639 ns, elapsed 2.4 s, 621 iter/s)
+    read 2000 iterations  (t = 0.852 ns, elapsed 3.1 s, 635 iter/s)
+    read 2500 iterations  (t = 1.065 ns, elapsed 3.9 s, 645 iter/s)
+    read 3000 iterations  (t = 1.278 ns, elapsed 4.6 s, 651 iter/s)
+    read 3500 iterations  (t = 1.491 ns, elapsed 5.4 s, 653 iter/s)
+    read 4000 iterations  (t = 1.704 ns, elapsed 6.2 s, 650 iter/s)
+    read 4500 iterations  (t = 1.917 ns, elapsed 6.9 s, 651 iter/s)
+    read 5000 iterations  (t = 2.131 ns, elapsed 7.7 s, 652 iter/s)
+    read 5500 iterations  (t = 2.344 ns, elapsed 8.5 s, 649 iter/s)
+    read 6000 iterations  (t = 2.557 ns, elapsed 9.2 s, 650 iter/s)
+    read 6500 iterations  (t = 2.770 ns, elapsed 10.0 s, 651 iter/s)
+    read 7000 iterations  (t = 2.983 ns, elapsed 10.7 s, 653 iter/s)
+    read 7500 iterations  (t = 3.196 ns, elapsed 11.5 s, 652 iter/s)
+    read 8000 iterations  (t = 3.409 ns, elapsed 12.3 s, 653 iter/s)
+    read 8500 iterations  (t = 3.622 ns, elapsed 13.1 s, 650 iter/s)
+    read 9000 iterations  (t = 3.835 ns, elapsed 13.9 s, 649 iter/s)
+    read 9500 iterations  (t = 4.048 ns, elapsed 14.7 s, 647 iter/s)
+    read 10000 iterations  (t = 4.262 ns, elapsed 15.5 s, 644 iter/s)
+    read 10500 iterations  (t = 4.475 ns, elapsed 16.3 s, 642 iter/s)
+    read 11000 iterations  (t = 4.688 ns, elapsed 17.2 s, 641 iter/s)
+    read 11500 iterations  (t = 4.901 ns, elapsed 18.0 s, 640 iter/s)
+    read 12000 iterations  (t = 5.114 ns, elapsed 18.8 s, 638 iter/s)
+    read 12500 iterations  (t = 5.327 ns, elapsed 19.6 s, 639 iter/s)
+    read 13000 iterations  (t = 5.540 ns, elapsed 20.4 s, 637 iter/s)
+    read 13500 iterations  (t = 5.753 ns, elapsed 21.2 s, 637 iter/s)
+    read 14000 iterations  (t = 5.966 ns, elapsed 21.9 s, 638 iter/s)
+    read 14500 iterations  (t = 6.180 ns, elapsed 22.7 s, 639 iter/s)
+    reached --max-iterations = 14983, stopping series read early
+  done: 14983 iterations read in 23.4 s (641 iter/s)
+  14983 steps,  dt = 4.2620e-13 s,  t ∈ [0.0000, 6.3854] ns
+  peak |a_E_rec| = 2.7527e+05 V/m,  peak |a_B_rec| = 7.5492e-04 T
+
+Using analytical Gaussian reference:
+  E0 = 1.000e+06 V/m,  carrier f0 = 67.000 GHz
+  t_peak = 0.1300 ns  (emitter-frame peak time — NOT shifted to receiver)
+  FWHM = 50.0 ps,  τ = 30.03 ps
+  emit_pos = -13.71890 cm,  recv_pos = 13.72768 cm
+  vg(f0) = 0.8036 c,  v_p(f0) = 1.2444 c
+  Expected straight-guide arrival at receiver: t = 1.2692 ns  (informational only)
+  peak |a_E_inj| = 9.9999e+05 V/m  (envelope * carrier)
+  peak |a_B_inj| = 2.6806e-03 T
+
+Propagation axis: X,  L = 27.44658 cm
+TE10 cutoff = 39.875 GHz
+Window: none
+Geometry: complex  (straight-guide analytic is a REFERENCE only)
+  NOTE: numbers reported below as '|S21| deviation' are the
+        difference between simulation and the straight-guide
+        reference and are NOT expected to be small.
+
+Directional S21 = A_+_recv / A_+_inj,  deviations in [60, 74] GHz (5722 freq points):
+  |S21| deviation  max = 8.89e-01  RMS = 6.81e-01
+  Phase deviation  max = 762.6954 deg  RMS = 467.2394 deg
+
+Naive E-only S21 for comparison:
+  |S21| deviation  max = 8.82e-01  RMS = 6.76e-01
+
+Simulated |S21| in [60, 74] GHz:
+  mean = 3.229e-01  peak = 5.220e-01  min  = 1.112e-01
+  mean |S21| in dB = -9.82 dB
+
+Reflection diagnostics (from directional split):
+  |S11|_inj  mean = 1.465e-02  max = 3.636e-02
+  |S22|_recv mean = 1.978e-01  max = 2.110e-01
+
+=== S21 at carrier f0 = 67.000 GHz (nearest bin 66.9993 GHz, offset -0.679 MHz) ===
+  |S21|(f0)         = 2.959970e-01  (-10.574 dB)
+  arg(S21)(f0)      = -17.4228 deg   (wrapped to [-180, +180])
+  arg(S21_ref)(f0)  = -105.5356 deg   (straight-guide analytic reference)
+  Δφ_wrapped(f0)    = +88.1128 deg   (arg(S21_sim / S21_ref), wrapped)
+  |S11|(f0)_inj     = 2.7772e-06
+  |S22|(f0)_recv    = 1.9989e-01
+
+Figure saved: s21_validation_directional_splitting.png

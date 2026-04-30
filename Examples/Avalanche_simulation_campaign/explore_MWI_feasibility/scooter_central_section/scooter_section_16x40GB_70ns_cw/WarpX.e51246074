@@ -1,0 +1,142 @@
+MPICH ERROR [Rank 12] [job id 51246074.0] [Wed Apr  8 18:27:40 2026] [nid003701] - Abort(337296399) (rank 12 in comm 0): Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=16, disp_unit=1, MPI_INFO_NULL, comm=0xc4000007, baseptr=0x7ffe104f0f80, win=0x378bb088) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+
+aborting job:
+Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=16, disp_unit=1, MPI_INFO_NULL, comm=0xc4000007, baseptr=0x7ffe104f0f80, win=0x378bb088) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+MPICH ERROR [Rank 13] [job id 51246074.0] [Wed Apr  8 18:27:40 2026] [nid003701] - Abort(739949583) (rank 13 in comm 0): Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=0, disp_unit=1, MPI_INFO_NULL, comm=0xc4000003, baseptr=0x7fffdfd424e0, win=0x37810708) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+
+aborting job:
+Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=0, disp_unit=1, MPI_INFO_NULL, comm=0xc4000003, baseptr=0x7fffdfd424e0, win=0x37810708) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+MPICH ERROR [Rank 14] [job id 51246074.0] [Wed Apr  8 18:27:40 2026] [nid003701] - Abort(605731855) (rank 14 in comm 0): Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=0, disp_unit=1, MPI_INFO_NULL, comm=0xc4000001, baseptr=0x7ffd5e1eb580, win=0x36031948) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+
+aborting job:
+Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=0, disp_unit=1, MPI_INFO_NULL, comm=0xc4000001, baseptr=0x7ffd5e1eb580, win=0x36031948) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+MPICH ERROR [Rank 15] [job id 51246074.0] [Wed Apr  8 18:27:40 2026] [nid003701] - Abort(203078671) (rank 15 in comm 0): Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=0, disp_unit=1, MPI_INFO_NULL, comm=0xc4000001, baseptr=0x7ffe50332640, win=0x36385aa8) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+
+aborting job:
+Fatal error in internal_Win_allocate_shared: Other MPI error, error stack:
+internal_Win_allocate_shared(105)...: MPI_Win_allocate_shared(size=0, disp_unit=1, MPI_INFO_NULL, comm=0xc4000001, baseptr=0x7ffe50332640, win=0x36385aa8) failed
+MPID_Win_allocate_shared(243).......: 
+MPIDIG_mpi_win_allocate_shared(1012): 
+win_shm_alloc_impl(661).............: unable to allocate shared memory
+amrex::Abort::12::CUDA error 4 in file /pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/_deps/fetchedamrex-src/Src/Base/AMReX_GpuDevice.cpp line 175: driver shutting down !!!
+amrex::Abort::13::CUDA error 4 in file /pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/_deps/fetchedamrex-src/Src/Base/AMReX_GpuDevice.cpp line 175: driver shutting down !!!
+SIGABRT
+amrex::Abort::14::CUDA error 4 in file /pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/_deps/fetchedamrex-src/Src/Base/AMReX_GpuDevice.cpp line 175: driver shutting down !!!
+SIGABRT
+amrex::Abort::15::CUDA error 4 in file /pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/_deps/fetchedamrex-src/Src/Base/AMReX_GpuDevice.cpp line 175: driver shutting down !!!
+SIGABRT
+SIGABRT
+See Backtrace.15 file for details
+Assertion failed in file ../src/binding/c/init/abort.c at line 36: 0
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x72ccfa) [0x7f6d4ef55cfa]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x5a3c04) [0x7f6d4edccc04]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(MPI_Abort+0x390) [0x7f6d4e92a300]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex11BLBackTrace7handlerEi+0x99a) [0x7f6d7d431b7a]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex3Gpu13StreamManager4syncEv+0x58f) [0x7f6d7d54d59f]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex3Gpu6Device17streamSynchronizeEv+0x28) [0x7f6d7d54d8b8]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(+0x2d99c5) [0x7f6d7d3f79c5]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(+0x2d9988) [0x7f6d7d3f7988]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex8FabArrayINS_9FArrayBoxEE5clearEv+0x2bc) [0x7f6d7d4163fc]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex8FabArrayINS_9FArrayBoxEED1Ev+0x1b) [0x7f6d7d416bfb]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex3EB213IndexSpaceSTLD0Ev+0xb8) [0x7f6d7d7d60d8]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex6VectorISt10unique_ptrINS_3EB210IndexSpaceESt14default_deleteIS3_EESaIS6_EED1Ev+0x32) [0x7f6d7d717262]
+/lib64/libc.so.6(+0x5a1a6) [0x7f6e630451a6]
+/lib64/libc.so.6(+0x5a2ec) [0x7f6e630452ec]
+/opt/cray/pe/lib64/libpmi.so.0(PMI2_Finalize+0) [0x7f6db484c162]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x5e7b92) [0x7f6d4ee10b92]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x515208) [0x7f6d4ed3e208]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(MPIR_Err_return_comm+0xf8) [0x7f6d4ed3e318]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(PMPI_Win_allocate_shared+0x18a) [0x7f6d4eae8c6a]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core_mpi.so.2.10(_ZNK6adios26helper11CommImplMPI19Win_allocate_sharedEmiPvRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE+0x15a) [0x7f6db3c8b26a]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios26helper4Comm19Win_allocate_sharedEmiPvRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE+0x10) [0x7f6d2f6654e0]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios24core6engine9BP5Writer21WriteData_TwoLevelShmEPNS_6format7BufferVE+0x2c6) [0x7f6d2f714736]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios24core6engine9BP5Writer9WriteDataEPNS_6format7BufferVE+0xc8) [0x7f6d2f7032b8]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios24core6engine9BP5Writer9FlushDataEb+0xe8) [0x7f6d2f70b968]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios24core6engine9BP5Writer16PerformDataWriteEv+0x8f) [0x7f6d2f70bd8f]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/venvs/warpx-gpu/lib/python3.11/site-packages/pywarpx/warpx_pybind_3d.cpython-311-x86_64-linux-gnu.so(+0xd9dd7c) [0x7f6d30daed7c]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/venvs/warpx-gpu/lib/python3.11/site-packages/pywarpx/warpx_pybind_3d.cpython-311-x86_64-linux-gnu.so(_ZN7openPMD6detail10ADIOS2File10flush_implENS1_17ADIOS2FlushParamsERKSt8functionIFvRS1_RN6adios26EngineEEEbb+0x156) [0x7f6d30dae0b6]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/venvs/warpx-gpu/lib/python3.11/site-packages/pywarpx/warpx_pybind_3d.cpython-311-x86_64-linux-gnu.so(_ZN7openPMD6detail10ADIOS2File10flush_implENS1_17ADIOS2FlushParamsEb+0x45) [0x7f6d30dae5c5]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/venvs/warpx-gpu/lib/python3.11/site-packages/pywarpx/warpx_pybind_3d.cpython-311-x86_64-linux-gnu.so(_ZN7openPMD19ADIOS2IOHandlerImpl5flushERNS_8internal17ParsedFlushParamsE+0xe0) [0x7f6d30d4e620]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/venvs/warpx-gpu/lib/python3.11/site-packages/pywarpx/warpx_pybind_3d.cpython-311-x86_64-linux-gnu.so(_ZN7openPMD15ADIOS2IOHandler5flushERNS_8internal17ParsedFlushParamsE+0x10) [0x7f6d30d4ef50]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/venvs/warpx-gpu/lib/python3.11/site-packages/pywarpx/warpx_pybind_3d.cpython-311-x86_64-linux-gnu.so(_ZN7openPMD17AbstractIOHandler5flushERKNS_8internal11FlushParamsE+0x3b) [0x7f6d30cad03b]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/venvs/warpx-gpu/lib/python3.11/site-packages/pywarpx/warpx_pybind_3d.cpython-311-x86_64-linux-gnu.so(_ZN7openPMD6Series7advanceENS_11AdvanceModeERNS_8internal16AttributableDataESt17_Rb_tree_iteratorISt4pairIKmNS_9IterationEEE+0x2ca) [0x7f6d30b7c23a]
+MPICH ERROR [Rank 15] [job id 51246074.0] [Wed Apr  8 18:27:43 2026] [nid003701] - Abort(1): Internal error
+
+Assertion failed in file ../src/binding/c/group/group_free.c at line 36: 0
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x72ccfa) [0x7f6d4ef55cfa]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x5a3c04) [0x7f6d4edccc04]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(PMPI_Group_free+0x2f0) [0x7f6d4e923ba0]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex15ParallelContext5FrameD1Ev+0x16) [0x7f6d7d3f68b6]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex6VectorINS_15ParallelContext5FrameESaIS2_EED2Ev+0x2c) [0x7f6d7d3f6f8c]
+/lib64/libc.so.6(+0x5a1a6) [0x7f6e630451a6]
+/lib64/libc.so.6(+0x5a2ec) [0x7f6e630452ec]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x731fed) [0x7f6d4ef5afed]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x5e7b76) [0x7f6d4ee10b76]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x5a3c14) [0x7f6d4edccc14]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(MPI_Abort+0x390) [0x7f6d4e92a300]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex11BLBackTrace7handlerEi+0x99a) [0x7f6d7d431b7a]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex3Gpu13StreamManager4syncEv+0x58f) [0x7f6d7d54d59f]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex3Gpu6Device17streamSynchronizeEv+0x28) [0x7f6d7d54d8b8]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(+0x2d99c5) [0x7f6d7d3f79c5]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(+0x2d9988) [0x7f6d7d3f7988]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex8FabArrayINS_9FArrayBoxEE5clearEv+0x2bc) [0x7f6d7d4163fc]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex8FabArrayINS_9FArrayBoxEED1Ev+0x1b) [0x7f6d7d416bfb]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex3EB213IndexSpaceSTLD0Ev+0xb8) [0x7f6d7d7d60d8]
+/pscratch/sd/m/mgarten/storage/m4608/warpx_build_python_2D3D_cleanedUpHybridRebased_260302/lib/libamrex_3d.so(_ZN5amrex6VectorISt10unique_ptrINS_3EB210IndexSpaceESt14default_deleteIS3_EESaIS6_EED1Ev+0x32) [0x7f6d7d717262]
+/lib64/libc.so.6(+0x5a1a6) [0x7f6e630451a6]
+/lib64/libc.so.6(+0x5a2ec) [0x7f6e630452ec]
+/opt/cray/pe/lib64/libpmi.so.0(PMI2_Finalize+0) [0x7f6db484c162]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x5e7b92) [0x7f6d4ee10b92]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(+0x515208) [0x7f6d4ed3e208]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(MPIR_Err_return_comm+0xf8) [0x7f6d4ed3e318]
+/opt/cray/pe/lib64/libmpi_gnu_123.so.12(PMPI_Win_allocate_shared+0x18a) [0x7f6d4eae8c6a]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core_mpi.so.2.10(_ZNK6adios26helper11CommImplMPI19Win_allocate_sharedEmiPvRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE+0x15a) [0x7f6db3c8b26a]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios26helper4Comm19Win_allocate_sharedEmiPvRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE+0x10) [0x7f6d2f6654e0]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios24core6engine9BP5Writer21WriteData_TwoLevelShmEPNS_6format7BufferVE+0x2c6) [0x7f6d2f714736]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios24core6engine9BP5Writer9WriteDataEPNS_6format7BufferVE+0xc8) [0x7f6d2f7032b8]
+/pscratch/sd/m/mgarten/storage/sw/warpx/perlmutter/gpu/adios2-2.10.2/lib64/../lib64/libadios2_core.so.2.10(_ZN6adios24core6engine9BP5Writer9FlushDataEb+0xe8) [0x7f6d2f70b968]
+MPICH ERROR [Rank 15] [job id 51246074.0] [Wed Apr  8 18:27:43 2026] [nid003701] - Abort(1): Internal error
+
+See Backtrace.12 file for details
+srun: error: nid003701: task 15: Exited with exit code 1
+srun: Terminating StepId=51246074.0
+See Backtrace.14 file for details
+See Backtrace.13 file for details
+[2026-04-09T01:27:48.447] error: *** STEP 51246074.0 ON nid003696 CANCELLED AT 2026-04-09T01:27:48 DUE TO TASK FAILURE ***
+srun: error: nid003701: tasks 13-14: Terminated
+srun: error: nid003697: tasks 4-6: Terminated
+srun: error: nid003696: tasks 0,2-3: Terminated
+srun: error: nid003700: tasks 8,10-11: Terminated
+srun: error: nid003701: task 12: Terminated
+srun: error: nid003697: task 7: Terminated
+srun: error: nid003696: task 1: Terminated
+srun: error: nid003700: task 9: Terminated
+srun: Force Terminated StepId=51246074.0

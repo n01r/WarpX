@@ -91,26 +91,13 @@ mu0 = 4e-7 * np.pi     # H/m
 a_wg = 3.7592e-3    # m — WR-15 broad wall
 b_wg = 1.8796e-3    # m — WR-15 narrow wall
 
-# NOTE on port positions:
-# Emitter and receiver positions along the propagation axis are CLI-driven
-# (--emit-pos, --recv-pos) and treated as scalars on the auto-detected
-# propagation axis.  The propagation axis itself is inferred from the
-# receiving_plane slab (thin dimension of the openPMD slab, or smallest-range
-# coordinate column of the FieldProbe .dat).
-#
-# --emit-pos is REQUIRED whenever it is needed (any --analytic-ref run, or
-# the analytic-curve overlay in pulse mode).  No fallback default is provided
-# because there is no STL-agnostic way to guess where the emitter sits.
-#
-# --recv-pos is OPTIONAL.  When omitted, the receiver position is taken from
-# the slab metadata: for openPMD it is the centerline of the slab along the
-# propagation axis; for FieldProbe it is the mean of the (constant) propagation-
-# axis coordinate column.  Override only when you want to phase-reference to
-# a plane other than the receiving slab itself.
-#
-# Together with the auto-detected propagation axis these CLI flags make the
-# script geometry-agnostic: any new STL works as long as the emit and recv
-# ports are parallel and in line of sight along the propagation axis.
+# Port positions for Z-propagation cases (PEC, EB waveguide, horn-to-horn)
+inject_z = -0.12272     # m
+recv_z   =  0.12591     # m
+
+# Port positions for X-propagation case (scooter)
+inject_x = -0.11665     # m
+recv_x   =  0.13468     # m
 
 # Frequency band of interest
 f_lo = 60e9             # Hz
@@ -386,10 +373,6 @@ def load_plane_timeseries(diag_dir, diag_name, access_override=None,
     prop_axis: int          physical propagation axis index (0=X, 1=Y, 2=Z)
     E_comp   : str          E-field component used ('y' or 'z')
     B_comp   : str          paired B-field component used ('x' or 'y')
-    prop_pos : float        centerline position of the slab along the
-                            propagation (thin) axis [m].  Used downstream
-                            as the receiver position when the user does
-                            not override it via --recv-pos.
     """
     path, encoding, access, options = _detect_openpmd_series_path(
         diag_dir, diag_name, access_override=access_override)
@@ -475,7 +458,7 @@ def load_plane_timeseries(diag_dir, diag_name, access_override=None,
             E_2d = raw_E.mean(axis=thin_dim)
             B_2d = raw_B.mean(axis=thin_dim)
 
-            # ── Build coordinate arrays on first data iteration ─────────────────────
+            # ── Build coordinate arrays on first data iteration ───────────────────
             if coord_a is None:
                 offs = comp_E.position        # sub-cell offset fractions per array dim
                 na, nb = E_2d.shape
@@ -485,17 +468,6 @@ def load_plane_timeseries(diag_dir, diag_name, access_override=None,
                 coord_b = (orig[dim1] + offs[dim1] * gs[dim1]
                            + np.arange(nb) * gs[dim1])
                 d_a, d_b = float(gs[dim0]), float(gs[dim1])
-
-                # Centerline coordinate of the slab along the propagation
-                # (thin) axis.  This is the position downstream code will
-                # use as the receiver port unless the user overrides it.
-                n_thin   = shape[thin_dim]
-                prop_pos = float(
-                    orig[thin_dim] + offs[thin_dim] * gs[thin_dim]
-                    + 0.5 * (n_thin - 1) * gs[thin_dim])
-                print(f"  Receiver-plane centerline: "
-                      f"{'XYZ'[prop_axis]} = {prop_pos*1e2:.5f} cm "
-                      f"(slab thickness = {n_thin} cell{'s' if n_thin != 1 else ''})")
 
             times.append(float(it.time))
             E_ts.append(E_2d)
@@ -550,7 +522,7 @@ def load_plane_timeseries(diag_dir, diag_name, access_override=None,
             np.stack(E_ts, axis=0),
             np.stack(B_ts, axis=0),
             coord_a, coord_b, d_a, d_b,
-            prop_axis, E_comp, B_comp, prop_pos)
+            prop_axis, E_comp, B_comp)
 
 
 # ── FieldProbe loader ──────────────────────────────────────────────────────────
@@ -611,7 +583,7 @@ def load_fieldprobe_plane_timeseries(filepath, resolution,
     -------
     Same tuple as :func:`load_plane_timeseries`:
         times, E_ts, B_ts, coord_a, coord_b, d_a, d_b,
-        prop_axis, E_comp, B_comp, prop_pos
+        prop_axis, E_comp, B_comp
     """
     # Deferred import so the module still loads in environments without
     # pandas (only the FieldProbe path needs it).
@@ -673,15 +645,9 @@ def load_fieldprobe_plane_timeseries(filepath, resolution,
     ranges = [float(c.max() - c.min()) for c in coord_block]
     prop_axis = int(np.argmin(ranges))
     aper_axes = [k for k in range(3) if k != prop_axis]
-    # Centerline of the probe plane along the propagation axis -- the probe-
-    # axis coordinate column is (numerically) constant across all probe points
-    # of one block, so the mean is the plane position.
-    prop_pos = float(coord_block[prop_axis].mean())
     print(f"  Coordinate ranges: x={ranges[0]*1e3:.2f} mm, "
           f"y={ranges[1]*1e3:.2f} mm, z={ranges[2]*1e3:.2f} mm")
     print(f"  Propagation axis (smallest range): {'XYZ'[prop_axis]}")
-    print(f"  Receiver-plane position: "
-          f"{'XYZ'[prop_axis]} = {prop_pos*1e2:.5f} cm")
 
     E_comp = _E_COMP_BY_PROP_AXIS[prop_axis]
     B_comp = _B_COMP_BY_PROP_AXIS[prop_axis]
@@ -749,7 +715,7 @@ def load_fieldprobe_plane_timeseries(filepath, resolution,
 
     return (times, E_ts, B_ts,
             coord_a, coord_b, d_a, d_b,
-            prop_axis, E_comp, B_comp, prop_pos)
+            prop_axis, E_comp, B_comp)
 
 
 # ── TE10 mode shape and overlap integral ───────────────────────────────────────
@@ -960,8 +926,7 @@ def iq_demodulate(t, a, f0, lpf_cutoff_hz, lpf_order=6):
 
 # ── CW analysis ──────────────────────────────────────────────────────────────
 
-def cw_analysis(args, t_rec, aE_rec, aB_rec, prop_axis, E_comp, B_comp,
-                is_complex, recv_pos):
+def cw_analysis(args, t_rec, aE_rec, aB_rec, prop_axis, E_comp, B_comp, is_complex):
     """Time-resolved |S21|(t) and phase(t) by I/Q demodulation at args.freq.
 
     Builds an analytic CW reference (steady-state cosine at the carrier) when
@@ -971,23 +936,14 @@ def cw_analysis(args, t_rec, aE_rec, aB_rec, prop_axis, E_comp, B_comp,
     values.  Also reports a line-integrated electron density estimate from
     the phase under the low-density approximation, as a sanity-check output
     for plasma runs.
-
-    ``recv_pos`` is the receiver-port position [m] along the propagation axis,
-    and ``args.emit_pos`` is the emitter-port position; both are required when
-    --analytic-ref is set.  L = |recv_pos - emit_pos| is then the propagation
-    distance.
     """
     f0 = args.freq
     c  = 2.99792458e8
 
-    if args.emit_pos is None:
-        raise SystemExit("--emit-pos is required for CW analysis (sets the "
-                         "propagation distance L = |recv_pos - emit_pos|).")
-
-    # ── Derived physical quantities ───────────────────────────────────────────────────────────
+    # ── Derived physical quantities ──────────────────────────────────────────
     vg_f0 = c * np.sqrt(max(1 - (fc_te10 / f0) ** 2, 0.0))
     vp_f0 = c / np.sqrt(max(1 - (fc_te10 / f0) ** 2, 1e-30))
-    L     = abs(recv_pos - args.emit_pos)
+    L     = abs(recv_x - inject_x) if prop_axis == 0 else abs(recv_z - inject_z)
 
     # ── Pick transient-skip time ─────────────────────────────────────────────
     # Rough rule: allow two round-trips of direct-path propagation for the
@@ -1010,6 +966,11 @@ def cw_analysis(args, t_rec, aE_rec, aB_rec, prop_axis, E_comp, B_comp,
     # no ramp.  If the user set --analytic-ref, construct one; otherwise load
     # the injection_plane diagnostic and demodulate that too.
     if args.analytic_ref:
+        if args.emit_pos is None:
+            raise SystemExit("--emit-pos is required with --analytic-ref "
+                             "even in CW mode (sets the zero-phase reference "
+                             "plane).")
+        recv_pos = recv_x if prop_axis == 0 else recv_z
         # The reference is steady-state CW at the carrier, phase-referenced
         # to the EMITTER plane (NOT time-shifted to receiver arrival).  A
         # time-shift τ_shift = L/v_g would multiply A_inj(f) by exp(-iωτ),
@@ -1026,7 +987,7 @@ def cw_analysis(args, t_rec, aE_rec, aB_rec, prop_axis, E_comp, B_comp,
     else:
         print("Loading injection plane ...", flush=True)
         (t_inj, E_inj, B_inj, _, _, _, _,
-         _, _, _, _) = load_plane_timeseries(args.diag_dir, "injection_plane")
+         _, _, _) = load_plane_timeseries(args.diag_dir, "injection_plane")
         aE_inj = project_mode(E_inj, *_cw_coord_args(args))
         aB_inj = project_mode(B_inj, *_cw_coord_args(args))
         ref_desc = "measured injection_plane"
@@ -1312,21 +1273,9 @@ def main():
     parser.add_argument("--pulse-fwhm",   type=float, default=0.05e-9,
                         help="Pulse FWHM [s] (default: 0.05e-9)")
     parser.add_argument("--emit-pos",     type=float, default=None,
-                        help="Emitter port position along the propagation "
-                             "axis [m].  REQUIRED for any analytic-reference "
-                             "or analytic-curve computation: it sets the "
-                             "propagation length L = |recv_pos - emit_pos| "
-                             "and the pulse arrival time at the receiver. "
-                             "No default — must be passed explicitly per run.")
-    parser.add_argument("--recv-pos",     type=float, default=None,
-                        help="Receiver port position along the propagation "
-                             "axis [m].  OPTIONAL.  When omitted, the receiver "
-                             "position is taken from the receiving_plane "
-                             "diagnostic metadata (slab centerline for "
-                             "openPMD; mean of the constant prop-axis "
-                             "coordinate column for FieldProbe).  Override "
-                             "only when phase-referencing to a plane other "
-                             "than the diagnostic slab itself.")
+                        help="Emitter position along the propagation axis [m]. "
+                             "Used with --analytic-ref to compute arrival time "
+                             "at the receiving plane.")
     parser.add_argument("--E0",           type=float, default=1e6,
                         help="Peak injected E-field amplitude [V/m] (default: 1e6)")
     parser.add_argument("--freq",         type=float, default=67e9,
@@ -1431,9 +1380,7 @@ def main():
 
     def _load_plane(kind):
         """Dispatch to openPMD or FieldProbe loader for ``kind`` in
-        {'injection', 'receiving'}.  Returns the same 11-tuple in both cases:
-        ``(times, E_ts, B_ts, coord_a, coord_b, d_a, d_b,
-            prop_axis, E_comp, B_comp, prop_pos)``.
+        {'injection', 'receiving'}.  Returns the same 10-tuple in both cases.
         """
         if args.source == "fieldprobe":
             if kind == "injection":
@@ -1457,21 +1404,11 @@ def main():
                                          access_override=access_override,
                                          max_iterations=args.max_iterations)
 
-    # ── Load receiving plane ────────────────────────────────────────────────────────────────────────
+    # ── Load receiving plane ───────────────────────────────────────────────────────
     print(f"Loading receiving plane (source = {args.source}) ...", flush=True)
     (t_rec, E_rec, B_rec,
      coord_a, coord_b, d_a, d_b,
-     prop_axis, E_comp, B_comp, prop_pos_recv) = _load_plane("receiving")
-
-    # Resolve the receiver position used by every downstream L computation:
-    # CLI override wins, otherwise fall back to the slab-derived centerline.
-    if args.recv_pos is not None:
-        recv_pos = float(args.recv_pos)
-        print(f"  Using --recv-pos override: "
-              f"{'XYZ'[prop_axis]} = {recv_pos*1e2:.5f} cm "
-              f"(slab centerline was {prop_pos_recv*1e2:.5f} cm)")
-    else:
-        recv_pos = prop_pos_recv
+     prop_axis, E_comp, B_comp) = _load_plane("receiving")
 
     aE_rec = project_mode(E_rec, coord_a, coord_b, d_a, d_b)
     aB_rec = project_mode(B_rec, coord_a, coord_b, d_a, d_b)
@@ -1488,8 +1425,7 @@ def main():
     if args.mode == "cw":
         print(f"\n=== CW mode ===")
         cw_analysis(args, t_rec, aE_rec, aB_rec,
-                    prop_axis, E_comp, B_comp, is_complex,
-                    recv_pos=recv_pos)
+                    prop_axis, E_comp, B_comp, is_complex)
         return
 
     # ── Incident reference: injection plane or analytical ─────────────────────
@@ -1509,6 +1445,7 @@ def main():
         if args.emit_pos is None:
             parser.error("--emit-pos is required when using --analytic-ref")
 
+        recv_pos  = recv_x if prop_axis == 0 else recv_z
         L_emit    = abs(recv_pos - args.emit_pos)
         vg_ref    = c * np.sqrt(max(1 - (fc_te10 / args.freq)**2, 0))
         vp_ref    = c / np.sqrt(max(1 - (fc_te10 / args.freq)**2, 1e-30))
@@ -1558,7 +1495,7 @@ def main():
               flush=True)
         (t_inj, E_inj, B_inj,
          coord_a, coord_b, d_a, d_b,
-         prop_axis, E_comp, B_comp, _) = _load_plane("injection")
+         prop_axis, E_comp, B_comp) = _load_plane("injection")
         aE_inj = project_mode(E_inj, coord_a, coord_b, d_a, d_b)
         aB_inj = project_mode(B_inj, coord_a, coord_b, d_a, d_b)
         print(f"  {len(t_inj)} steps,  dt = {np.mean(np.diff(t_inj)):.4e} s,  "
@@ -1568,19 +1505,14 @@ def main():
 
     # Sanity check: zero signal means the pulse has not yet reached the receiver
     if np.max(np.abs(aE_rec)) < 1e-20:
-        if args.emit_pos is not None:
-            L_check   = abs(recv_pos - args.emit_pos)
-            vg_approx = c * np.sqrt(max(1 - (fc_te10 / args.freq)**2, 0))
-            t_arr     = L_check / vg_approx if vg_approx > 0 else float('inf')
-            arrival_msg = (f"  Estimated pulse arrival: {t_arr*1e9:.3f} ns "
-                           f"(L = {L_check*1e2:.3f} cm), "
-                           f"but simulation ended at {t_rec[-1]*1e9:.4f} ns.")
-        else:
-            arrival_msg = ("  (Pass --emit-pos to estimate the expected "
-                           "pulse arrival time.)")
+        L_check   = abs(recv_x - inject_x) if prop_axis == 0 else abs(recv_z - inject_z)
+        vg_approx = c * np.sqrt(max(1 - (fc_te10 / args.freq)**2, 0))
+        t_arr     = L_check / vg_approx if vg_approx > 0 else float('inf')
         print(f"\n  WARNING: receiving plane signal is zero.")
-        print(arrival_msg)
-        print(f"  Re-run with excitation_mode='pulse' or extend t_sim_override.")
+        print(f"  Estimated pulse arrival: {t_arr*1e9:.3f} ns, "
+              f"but simulation ended at {t_rec[-1]*1e9:.4f} ns.")
+        print(f"  Re-run with excitation_mode='pulse' or "
+              f"t_sim_override >= {(t_arr + 0.5)*1e9:.1f}e-9")
         return
 
     # ── Consistency check: are the two planes from the SAME simulation? ──
@@ -1659,21 +1591,7 @@ def main():
         S21_sim_Eonly = np.where(np.abs(A_E_inj) > eps_E,
                                  A_E_rec / A_E_inj, np.nan + 0j)
 
-    # L for the analytic straight-guide reference curve.  Use the CLI
-    # emit_pos when available; otherwise fall back to the inter-plane distance
-    # measured between the receiving and (legacy) injection slabs.
-    if args.emit_pos is not None:
-        L = abs(recv_pos - args.emit_pos)
-    elif not args.analytic_ref:
-        # The legacy injection_plane diagnostic was loaded above; in that
-        # case the only positions we know are the two slab centerlines, and
-        # we don't have prop_pos_inj threaded through here.  Bail with a
-        # clear error rather than silently producing a misaligned reference.
-        raise SystemExit(
-            "--emit-pos is required to compute the analytic-reference "
-            "propagation length L when not using --analytic-ref.")
-    else:
-        L = abs(recv_pos - args.emit_pos)   # unreachable, but keeps L defined
+    L = abs(recv_x - inject_x) if prop_axis == 0 else abs(recv_z - inject_z)
     S21_ana = S21_analytic(freqs, L)
 
     # ── Residuals ────────────────────────────────────────────────────────────

@@ -1,0 +1,55 @@
+Loading receiving plane (source = fieldprobe) ...
+  FieldProbe file: ../diags/recv_probe.dat
+  resolution: 50 x 50 = 2500 probe points/step
+  read 88,412,500 rows = 35365 steps in 307.8 s
+  Coordinate ranges: x=3.76 mm, y=3.76 mm, z=0.00 mm
+  Propagation axis (smallest range): Z
+  Using E component: Ey,  paired B component: Bx
+  Aperture grid: 50 x 50,  d_a=-0.0767 mm,  d_b=0.0767 mm
+  Crop to WR-15 + 1 cell: 1248/2500 samples kept (49.9%)
+  35365 steps,  dt = 4.2417e-13 s,  t ∈ [0.0000, 15.0004] ns
+  peak |a_E_rec| = 3.4335e+05 V/m,  peak |a_B_rec| = 9.6712e-04 T
+
+Using analytical Gaussian reference:
+  E0 = 1.000e+06 V/m,  carrier f0 = 67.000 GHz
+  t_peak = 0.1300 ns  (emitter-frame peak time — NOT shifted to receiver)
+  FWHM = 50.0 ps,  τ = 30.03 ps
+  emit_pos = -13.00000 cm,  recv_pos = 12.59100 cm
+  vg(f0) = 0.8036 c,  v_p(f0) = 1.2444 c
+  Expected straight-guide arrival at receiver: t = 1.1922 ns  (informational only)
+  peak |a_E_inj| = 9.9629e+05 V/m  (envelope * carrier)
+  peak |a_B_inj| = 2.6707e-03 T
+
+Propagation axis: Z,  L = 24.86300 cm
+TE10 cutoff = 39.875 GHz
+Window: none
+Geometry: complex  (straight-guide analytic is a REFERENCE only)
+  NOTE: numbers reported below as '|S21| deviation' are the
+        difference between simulation and the straight-guide
+        reference and are NOT expected to be small.
+
+Directional S21 = A_+_recv / A_+_inj,  deviations in [60, 74] GHz (13440 freq points):
+  (aligned phase branches by removing a 1·360° offset;  β(f_mid)·L/2π ≈ 44.7 turns expected)
+  |S21| deviation  max = 7.99e-01  RMS = 6.48e-01
+  Phase deviation  max = 492.9570 deg  RMS = 286.2592 deg
+
+Naive E-only S21 for comparison:
+  |S21| deviation  max = 7.86e-01  RMS = 6.50e-01
+
+Simulated |S21| in [60, 74] GHz:
+  mean = 3.567e-01  peak = 5.310e-01  min  = 2.013e-01
+  mean |S21| in dB = -8.95 dB
+
+Reflection diagnostics (from directional split):
+  |S11|_inj  mean = 1.465e-02  max = 3.636e-02
+  |S22|_recv mean = 1.911e-01  max = 2.090e-01
+
+=== S21 at carrier f0 = 67.000 GHz (nearest bin 67.0004 GHz, offset +0.395 MHz) ===
+  |S21|(f0)         = 5.303411e-01  (-5.509 dB)
+  arg(S21)(f0)      = +12.2016 deg   (wrapped to [-180, +180])
+  arg(S21_ref)(f0)  = +124.4735 deg   (straight-guide analytic reference)
+  Δφ_wrapped(f0)    = -112.2719 deg   (arg(S21_sim / S21_ref), wrapped)
+  |S11|(f0)_inj     = 1.6176e-06
+  |S22|(f0)_recv    = 2.0284e-01
+
+Figure saved: s21_validation_directional_splitting_fieldprobe.png
