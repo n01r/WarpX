@@ -17,6 +17,7 @@ This section collects typical user workflows and best practices for WarpX.
    workflows/plot_timestep_duration
    workflows/psatd_stencil
    workflows/stl_geometry_preparation
+   workflows/electrode_voltage_clamp
    workflows/archiving
    workflows/ml_dataset_training
    workflows/optimas

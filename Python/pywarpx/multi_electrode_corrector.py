@@ -1,0 +1,451 @@
+# Copyright 2026 The WarpX Community
+#
+# This file is part of WarpX.
+#
+# License: BSD-3-Clause-LBNL
+
+"""Quasi-static harmonic voltage clamp for driven embedded-boundary electrodes.
+
+Holds several embedded conductors at prescribed potentials during an
+electromagnetic run without a Poisson solve per step.
+
+Per electrode ``k`` a charge-free unit field ``E_0k = -grad(phi_0k)`` is
+precomputed once, with electrode ``k`` at 1 V and all others grounded. Adding any
+combination ``sum_k V_k E_0k`` is a sum of discrete gradients, so it changes
+neither ``div(E)`` nor ``curl(E)``.
+
+Per correction the effective voltages follow from the capacitance relation
+
+    Q_j = Q_g,j + sum_k C_jk V_k   =>   V = C^-1 (Q - Q_g),
+
+where ``C_jk = eps0 * oint_j E_0k . n dS`` is the precomputed vacuum capacitance
+matrix, ``Q_j`` is the induced charge of the live field on electrode ``j`` and
+``Q_g,j`` is the plasma-induced charge with every electrode grounded. The feedback
+is ``delta_V = relaxation * (V_target - V)``, applied as ``E += sum_k delta_V_k E_0k``.
+
+``Q_g`` is observed either with a grounded Poisson solve (``qg_mode="grounded"``)
+or, by default, with the discrete Shockley-Ramo pairing
+``Q_g,k = -sum_a rho_a Psi_k[a]`` against the adjoint weighting potentials, which
+needs no solve. ``Psi_k`` is built from the transpose of WarpX's own discrete EB
+operator and charge functional; the plain unit-voltage basis is not the adjoint of
+that functional on a non-symmetric cut-cell operator.
+
+Usage::
+
+    from pywarpx.multi_electrode_corrector import MultiElectrodeBiasCorrector
+    from pywarpx.callbacks import (
+        installafterEsolve,
+        installafterInitatRestart,
+        installafterInitEsolve,
+    )
+
+    corrector = MultiElectrodeBiasCorrector(
+        sim=sim,
+        correction_interval=10,
+        electrodes=[
+            {"name": "left", "region": "(x<0)", "potential": +300.0},
+            {"name": "right", "region": "(x>0)", "potential": -700.0},
+        ],
+    )
+    # afterInitEsolve does not run on a restart, so register both init hooks
+    installafterInitEsolve(corrector.setup_after_init)
+    installafterInitatRestart(corrector.setup_after_init)
+    installafterEsolve(corrector.correct_field)
+
+Supported envelope: driven (prescribed-potential) electrodes, grounded PEC outer
+boundaries, and in RZ nodal CIC deposition without a charge filter. Floating
+electrodes, circuit coupling and dielectric boundaries are not modelled.
+"""
+
+
+def _get_libwarpx():
+    from pywarpx._libwarpx import libwarpx  # noqa: PLC0415
+
+    return libwarpx
+
+
+class MultiElectrodeBiasCorrector:
+    """Maintain several driven EB electrode potentials in EM mode.
+
+    Parameters
+    ----------
+    sim : picmi.Simulation
+        The initialized PICMI simulation.
+    correction_interval : int
+        Apply the correction every this many steps.
+    electrodes : list of dict
+        One entry per electrode, with keys ``"name"`` (identifier),
+        ``"region"`` (a parser expression ``w_k(x,y,z)``, nonzero on that
+        electrode's surface) and ``"potential"`` (the target voltage in V).
+        The regions should be close to disjoint indicators of the surfaces.
+    relaxation : float, optional
+        Feedback under-relaxation in (0, 1]. 1.0 reaches the target in one
+        correction; smaller values soften the per-step jump.
+    qg_mode : {"reciprocity", "grounded"}, optional
+        How the grounded plasma charge is observed. ``"reciprocity"`` (default)
+        pairs the deposited charge density with the adjoint weighting potentials.
+        ``"grounded"`` performs a real grounded Poisson solve per call, which is
+        exact but costs one MLMG solve.
+    adjoint_tolerance : float, optional
+        Relative residual tolerance for the adjoint weighting solves.
+    adjoint_max_iterations : int, optional
+        Maximum outer iteration count for the adjoint solves.
+    verbose : bool, optional
+        Print the capacitance matrix and the per-correction voltages.
+    """
+
+    def __init__(
+        self,
+        sim,
+        correction_interval,
+        electrodes,
+        relaxation=1.0,
+        qg_mode="reciprocity",
+        adjoint_tolerance=1.0e-10,
+        adjoint_max_iterations=200,
+        verbose=False,
+    ):
+        if not (0.0 < relaxation <= 1.0):
+            raise ValueError("relaxation must be in (0, 1].")
+        if len(electrodes) < 1:
+            raise ValueError("Provide at least one electrode.")
+        if qg_mode not in ("grounded", "reciprocity"):
+            raise ValueError(
+                f"qg_mode must be 'grounded' or 'reciprocity', got {qg_mode!r}"
+            )
+
+        self.sim = sim
+        self.correction_interval = correction_interval
+        self.electrodes = electrodes
+        self.relaxation = relaxation
+        self.qg_mode = qg_mode
+        self.adjoint_tolerance = float(adjoint_tolerance)
+        self.adjoint_max_iterations = int(adjoint_max_iterations)
+        self.verbose = verbose
+
+        self.n = len(electrodes)
+        self.regions = [e["region"] for e in electrodes]
+        self.v_target = [float(e["potential"]) for e in electrodes]
+        self.names = [
+            electrodes[k].get("name", f"electrode_{k}") for k in range(self.n)
+        ]
+        # combined EB potential of the configured electrode pattern
+        self.potential_expression = " + ".join(
+            f"({v})*({r})" for v, r in zip(self.v_target, self.regions)
+        )
+
+        self._ready = False
+        self._capacitance = None
+        self._capacitance_condition = None
+        self._adjoint_residuals = None
+        self._last_correction_state = None
+        self._unit_names = [f"Efield_unit_{k}" for k in range(self.n)]
+        self._psi_names = [f"psi_unit_{k}" for k in range(self.n)]
+
+    # -- libwarpx accessors --------------------------------------------------
+    def _warpx(self):
+        return _get_libwarpx().libwarpx_so.get_instance()
+
+    def _mfr(self):
+        return self._warpx().multifab_register()
+
+    def _Direction(self, comp):
+        return _get_libwarpx().libwarpx_so.Direction(comp)
+
+    # -- setup ---------------------------------------------------------------
+    def setup_after_init(self):
+        """Precompute the unit fields, the capacitance matrix and the adjoints.
+
+        Idempotent, so it can be registered on both ``afterInitEsolve`` and
+        ``afterInitatRestart``.
+        """
+        import numpy as np  # noqa: PLC0415
+
+        if self._ready:
+            return
+        warpx = self._warpx()
+        lev = 0
+
+        for name in self._unit_names:
+            self._alloc_vector_like_efield(name, lev)
+        if self.qg_mode == "reciprocity":
+            self._alloc_psi_fields(lev)
+
+        # One grounded solve shared by all electrodes: E_grounded carries the
+        # plasma field with every electrode at 0 V, so differencing it out of
+        # each "electrode k at 1 V" solve leaves the charge-free unit field.
+        saved = self._save_efield(lev)
+        warpx.set_potential_on_eb("0.0")
+        warpx.solve_poisson_efield()
+        grounded = self._save_efield(lev)
+
+        for k in range(self.n):
+            warpx.set_potential_on_eb(f"1.0*({self.regions[k]})")
+            warpx.solve_poisson_efield()
+            for comp in (0, 1, 2):
+                direction = self._Direction(comp)
+                unit = self._mfr().get(self._unit_names[k], dir=direction, level=lev)
+                unit.copymf(
+                    self._mfr().get("Efield_fp", dir=direction, level=lev), 0, 0, 1, 0
+                )
+                unit.saxpy(-1.0, grounded[comp], 0, 0, 1, 0)
+
+        # restore the live field and the configured EB potential
+        self._restore_efield(saved, lev)
+        warpx.set_potential_on_eb(self.potential_expression)
+
+        # vacuum capacitance matrix C_jk = eps0 * oint_j E_0k . n dS
+        self._capacitance = np.empty((self.n, self.n))
+        for j in range(self.n):
+            for k in range(self.n):
+                self._capacitance[j, k] = warpx.compute_eb_charge(
+                    weighting=self.regions[j], field=self._unit_names[k]
+                )
+        cond = float(np.linalg.cond(self._capacitance))
+        self._capacitance_condition = cond
+        if not np.isfinite(cond) or cond > 1.0e12:
+            raise RuntimeError(
+                f"Capacitance matrix is singular/ill-conditioned (cond={cond:.3e}). "
+                "Check that the electrode regions are distinct and non-overlapping."
+            )
+
+        if self.qg_mode == "reciprocity":
+            self._build_adjoint_weighting()
+
+        self._ready = True
+        if self.verbose:
+            print(f"[MultiElectrode] capacitance matrix (cond={cond:.3e}):")
+            print(self._capacitance)
+
+    def _build_adjoint_weighting(self):
+        """Solve for the discrete Shockley-Ramo weighting potential per electrode."""
+        warpx = self._warpx()
+        self._adjoint_residuals = []
+        for k, region in enumerate(self.regions):
+            ok, residual = warpx.solve_adjoint_weighting(
+                region=region,
+                out_name=self._psi_names[k],
+                tol=self.adjoint_tolerance,
+                max_iter=self.adjoint_max_iterations,
+            )
+            if not ok:
+                raise RuntimeError(
+                    f"Adjoint weighting solve for electrode {self.names[k]!r} "
+                    f"did not converge (relative residual {residual:.3e})."
+                )
+            self._adjoint_residuals.append(float(residual))
+            if self.verbose:
+                print(
+                    f"[MultiElectrode] adjoint Psi[{self.names[k]}]: "
+                    f"relative residual={residual:.3e}"
+                )
+
+    def _alloc_psi_fields(self, lev):
+        """Allocate one nodal scalar MultiFab per electrode for Psi_k."""
+        libwarpx = _get_libwarpx()
+        mfr = self._mfr()
+        ref = mfr.get("Efield_fp", dir=self._Direction(0), level=lev)
+        nodal_ba = ref.box_array().surroundingNodes()
+        # the adjoint solve scatters onto neighbouring nodes, so one ghost cell
+        ngrow = libwarpx.amr.IntVect(1)
+        for name in self._psi_names:
+            mfr.alloc_init(name, lev, nodal_ba, ref.dm(), 1, ngrow, 0.0, True, True)
+
+    def _alloc_vector_like_efield(self, name, lev):
+        mfr = self._mfr()
+        for comp in (0, 1, 2):
+            direction = self._Direction(comp)
+            ref = mfr.get("Efield_fp", dir=direction, level=lev)
+            mfr.alloc_init(
+                name,
+                direction,
+                lev,
+                ref.box_array(),
+                ref.dm(),
+                1,
+                ref.n_grow_vect,
+                0.0,
+                True,
+                True,
+            )
+
+    def _save_efield(self, lev):
+        mfr = self._mfr()
+        return {
+            comp: mfr.get("Efield_fp", dir=self._Direction(comp), level=lev).copy()
+            for comp in (0, 1, 2)
+        }
+
+    def _restore_efield(self, saved, lev):
+        mfr = self._mfr()
+        for comp in (0, 1, 2):
+            mfr.get("Efield_fp", dir=self._Direction(comp), level=lev).copymf(
+                saved[comp], 0, 0, 1, 0
+            )
+
+    # -- measurement ---------------------------------------------------------
+    def measure_voltage_state(self):
+        """Measure the charge/voltage state used by the feedback.
+
+        Returns a dict with ``voltage``, ``field_charge`` and ``grounded_charge``.
+        Collective: every rank must call it.
+        """
+        import numpy as np  # noqa: PLC0415
+
+        warpx = self._warpx()
+        lev = 0
+
+        field_charge = np.array(
+            [
+                warpx.compute_eb_charge(weighting=r, field="Efield_fp")
+                for r in self.regions
+            ]
+        )
+        if self.qg_mode == "grounded":
+            grounded_charge = self._grounded_charge_via_solve(lev)
+        else:
+            grounded_charge = self._grounded_charge_via_reciprocity(lev)
+
+        voltage = np.linalg.solve(self._capacitance, field_charge - grounded_charge)
+        return {
+            "voltage": voltage,
+            "field_charge": field_charge,
+            "grounded_charge": grounded_charge,
+        }
+
+    def _grounded_charge_via_solve(self, lev):
+        """Grounded plasma charge from a real save/solve/restore Poisson solve."""
+        import numpy as np  # noqa: PLC0415
+
+        warpx = self._warpx()
+        saved = self._save_efield(lev)
+        warpx.set_potential_on_eb("0.0")
+        warpx.solve_poisson_efield()
+        q_g = np.array(
+            [
+                warpx.compute_eb_charge(weighting=r, field="Efield_fp")
+                for r in self.regions
+            ]
+        )
+        self._restore_efield(saved, lev)
+        warpx.set_potential_on_eb(self.potential_expression)
+        return q_g
+
+    def _grounded_charge_via_reciprocity(self, lev):
+        """Grounded plasma charge from the adjoint pairing, without a solve."""
+        import numpy as np  # noqa: PLC0415
+
+        return np.asarray(
+            self._warpx().grounded_charge_from_adjoint(
+                psi_fields=self._psi_names, lev=lev
+            )
+        )
+
+    def compare_grounded_charge(self, reciprocity_charge=None):
+        """Compare the adjoint observer with a real grounded Poisson solve.
+
+        Collective and deliberately expensive. Pass the ``grounded_charge`` from
+        :meth:`measure_voltage_state` to reuse the correction's own result.
+        """
+        import numpy as np  # noqa: PLC0415
+
+        if reciprocity_charge is None:
+            reciprocity_charge = self._grounded_charge_via_reciprocity(0)
+        reciprocity_charge = np.asarray(reciprocity_charge, dtype=float)
+        solved_charge = self._grounded_charge_via_solve(0)
+        difference = reciprocity_charge - solved_charge
+        scale = np.maximum(
+            np.maximum(np.abs(reciprocity_charge), np.abs(solved_charge)),
+            np.finfo(float).tiny,
+        )
+        return {
+            "reciprocity_charge": reciprocity_charge,
+            "solved_charge": solved_charge,
+            "difference": difference,
+            "relative_difference": np.abs(difference) / scale,
+        }
+
+    # -- state for diagnostics ----------------------------------------------
+    def setup_state(self):
+        """Return serializable setup data, after initialization."""
+        if not self._ready:
+            raise RuntimeError("The multi-electrode corrector is not initialized yet.")
+        return {
+            "electrode_names": list(self.names),
+            "electrode_regions": list(self.regions),
+            "target_voltages": list(self.v_target),
+            "capacitance_matrix": self._capacitance.copy(),
+            "capacitance_condition": float(self._capacitance_condition),
+            "adjoint_residuals": (
+                None
+                if self._adjoint_residuals is None
+                else list(self._adjoint_residuals)
+            ),
+            "qg_mode": self.qg_mode,
+            "current_step": int(self._warpx().getistep(lev=0)),
+        }
+
+    def last_correction_state(self):
+        """Return a copy of the most recent correction state, or ``None``."""
+        if self._last_correction_state is None:
+            return None
+        return {
+            key: value.copy() if hasattr(value, "copy") else value
+            for key, value in self._last_correction_state.items()
+        }
+
+    # -- correction ----------------------------------------------------------
+    def correct_field(self):
+        """Drive every electrode to its target potential, preserving div and curl."""
+        import numpy as np  # noqa: PLC0415
+
+        warpx = self._warpx()
+        # afterEsolve fires before istep is incremented; use (step + 1)
+        step = warpx.getistep(lev=0)
+        if (step + 1) % self.correction_interval != 0:
+            return
+        if not self._ready:
+            return
+
+        state = self.measure_voltage_state()
+        v_now = state["voltage"]
+        dv = self.relaxation * (np.array(self.v_target) - v_now)
+        self._apply_bias(dv)
+
+        try:
+            time = float(warpx.gett_new(0))
+        except Exception:  # noqa: BLE001
+            time = float("nan")
+        self._last_correction_state = {
+            "step": int(step + 1),
+            "time": time,
+            "voltage_before": np.array(v_now, copy=True),
+            # the unit fields are normalized by the same capacitance matrix used
+            # above, so this is the exact linear prediction after the saxpy
+            "voltage_after_predicted": np.array(v_now + dv, copy=True),
+            "target_voltage": np.array(self.v_target, copy=True),
+            "voltage_error_before": np.array(self.v_target - v_now, copy=True),
+            "voltage_error_after_predicted": np.array(
+                self.v_target - (v_now + dv), copy=True
+            ),
+            "delta_voltage": np.array(dv, copy=True),
+            "field_charge": np.array(state["field_charge"], copy=True),
+            "grounded_charge": np.array(state["grounded_charge"], copy=True),
+        }
+
+        if self.verbose:
+            with np.printoptions(precision=2):
+                print(
+                    f"[MultiElectrode] step {step + 1}: V_now={v_now}, "
+                    f"target={np.array(self.v_target)}, dV={dv}"
+                )
+
+    def _apply_bias(self, dv):
+        """Efield_fp += sum_k dv_k * Efield_unit_k, a sum of discrete gradients."""
+        mfr = self._mfr()
+        for k in range(self.n):
+            for comp in (0, 1, 2):
+                direction = self._Direction(comp)
+                efield = mfr.get("Efield_fp", dir=direction, level=0)
+                unit = mfr.get(self._unit_names[k], dir=direction, level=0)
+                efield.saxpy(float(dv[k]), unit, 0, 0, 1, 0)
