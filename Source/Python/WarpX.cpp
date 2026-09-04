@@ -6,10 +6,13 @@
 #include "pyWarpX.H"
 
 #include <WarpX.H>
+
 // see WarpX.cpp - full includes for _fwd.H headers
 #include <BoundaryConditions/PEC_Insulator.H>
 #include <BoundaryConditions/PML.H>
 #include <Diagnostics/MultiDiagnostics.H>
+#include <Diagnostics/ReducedDiags/ChargeOnEB.H>
+#include <FieldSolver/ElectrostaticSolvers/AdjointWeightingSolve.H>
 #include <Diagnostics/ReducedDiags/MultiReducedDiags.H>
 #include <EmbeddedBoundary/WarpXFaceInfoBox.H>
 #include <FieldSolver/FiniteDifferenceSolver/FiniteDifferenceSolver.H>
@@ -33,6 +36,7 @@
 #include <Particles/ParticleBoundaryBuffer.H>
 #include <AcceleratorLattice/AcceleratorLattice.H>
 #include <Utils/TextMsg.H>
+#include <Utils/Parser/ParserUtils.H>
 #include <Utils/WarpXAlgorithmSelection.H>
 #include <Utils/WarpXConst.H>
 #include <Utils/WarpXUtil.H>
@@ -50,6 +54,7 @@
 #endif
 #include <memory>
 #include <string>
+#include <vector>
 
 
 //using namespace warpx;
@@ -255,6 +260,105 @@ void init_WarpX (py::module& m)
             "domain boundary conditions, replace Efield_fp with the result, and "
             "publish phi_fp when it is registered."
         )
+        .def("compute_eb_charge",
+            [] (WarpX& wx, const std::string& weighting, const std::string& field) {
+                int const lev = 0;
+                ablastr::fields::VectorField const E = wx.m_fields.get_alldirs(field, lev);
+                if (weighting.empty() || weighting == "1") {
+                    return WeightedChargeOnEB(E, lev, nullptr);
+                }
+                amrex::Parser parser = utils::parser::makeParser(weighting, {"x", "y", "z"});
+                return WeightedChargeOnEB(E, lev, &parser);
+            },
+            py::arg("weighting") = "1",
+            py::arg("field") = "Efield_fp",
+            "Induced charge eps0 * oint w(x,y,z) E.n dS over the embedded boundary for "
+            "the named field, with an optional weighting w(x,y,z) selecting one "
+            "electrode. 3D and RZ with EB only."
+        )
+        .def("grounded_charge_from_adjoint",
+            [] (WarpX& /*wx*/, const std::vector<std::string>& psi_fields, int lev) {
+                auto const q = WarpXGroundedChargeFromAdjoint(psi_fields, lev);
+                return std::vector<amrex::Real>(q.begin(), q.end());
+            },
+            py::arg("psi_fields"), py::arg("lev") = 0,
+            "Plasma-induced charge on each electrode with all electrodes grounded, "
+            "evaluated as -sum rho*Psi*dV against a freshly deposited charge density. "
+            "No Poisson solve. Shared nodes on box boundaries are counted once and the "
+            "RZ measure is WarpX's cylindrical nodal volume."
+        )
+        .def("solve_adjoint_weighting",
+            [] (WarpX& wx, const std::string& region, const std::string& out_name,
+                amrex::Real tol, int max_iter) {
+                int const lev = 0;
+                auto const& levset = wx.fieldEBFactory(lev).getLevelSet();
+
+                amrex::MultiFab* psi = wx.m_fields.get(out_name, lev);
+                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(psi != nullptr,
+                    "solve_adjoint_weighting: output field not registered");
+
+                const amrex::BoxArray& ba = psi->boxArray();
+                const amrex::DistributionMapping& dm = psi->DistributionMap();
+
+                // Constrained rows are the nodes covered by the EB and the nodes on
+                // the grounded outer walls. Leaving the walls free would pose the
+                // operator on a space that includes unconstrained boundary values.
+                amrex::iMultiFab dmsk(ba, dm, 1, 1);
+                dmsk.setVal(0);
+
+                const amrex::Box ndom = amrex::surroundingNodes(wx.Geom(lev).Domain());
+                const auto dlo = ndom.smallEnd();
+                const auto dhi = ndom.bigEnd();
+
+                for (amrex::MFIter mfi(dmsk); mfi.isValid(); ++mfi) {
+                    auto const& dma = dmsk.array(mfi);
+                    auto const& ls  = levset.const_array(mfi);
+                    amrex::ParallelFor(mfi.growntilebox(),
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                        {
+                            const bool covered = (ls(i,j,k) >= amrex::Real(0.0));
+#ifdef WARPX_DIM_RZ
+                            // r=0 is a regularity axis, not a grounded wall
+                            const bool wall =
+                                (i >= dhi[0] || j <= dlo[1] || j >= dhi[1]);
+#else
+                            const bool wall =
+                                (i <= dlo[0] || i >= dhi[0] ||
+                                 j <= dlo[1] || j >= dhi[1] ||
+                                 k <= dlo[2] || k >= dhi[2]);
+#endif
+                            dma(i,j,k) = (covered || wall) ? 1 : 0;
+                        });
+                }
+
+                amrex::MultiFab rhs(ba, dm, 1, 1);
+                WarpXBuildAdjointRHSChargeFunctional(rhs, region, dmsk, lev);
+
+                amrex::Real res = -1.0;
+                int iters = -1;
+                const bool ok = WarpXSolveAdjointWeighting(
+                    *psi, rhs, dmsk, lev, tol, max_iter, &res, &iters);
+                amrex::Print() << "solve_adjoint_weighting: " << iters
+                               << " outer iterations, converged="
+                               << (ok ? "true" : "false")
+                               << ", rel.residual=" << res << "\n";
+
+                WarpXFinalizeChargeFunctionalPsi(*psi, lev);
+                psi->FillBoundary(wx.Geom(lev).periodicity());
+                return py::make_tuple(ok, res);
+            },
+            py::arg("region"), py::arg("out_name"),
+            py::arg("tol") = 1.0e-10, py::arg("max_iter") = 200,
+            "Solve for the adjoint weighting potential Psi_k of the electrode selected "
+            "by region(x,y,z) and write it into the registered nodal field out_name. "
+            "Unlike the plain unit-voltage basis, this Psi makes the grounded-charge "
+            "identity Q_k = -sum_a rho_a Psi_k[a] exact on WarpX's non-symmetric EB "
+            "Laplacian. Requires grounded (PEC) outer boundaries. "
+            "Returns (converged, relative_residual); the caller must check converged, "
+            "because an unconverged Psi yields a plausible but wrong correction. "
+            "3D and RZ with EB only."
+        )
+
         .def("run_div_cleaner",
             [] (WarpX& wx) { wx.ProjectionCleanDivB(); },
             "Executes projection based divergence cleaner on loaded Bfield_fp_external."
