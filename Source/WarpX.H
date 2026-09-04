@@ -816,6 +816,16 @@ public:
     /** Electrostatic solve call */
     void ComputeSpaceChargeField (bool reset_E_field, bool reset_B_field);
 
+    /** Deposit charge and replace Efield_fp with the current Poisson solution. */
+    void SolvePoissonEfield ();
+
+    /** \brief Deposit all species onto a fresh nodal charge density.
+     *
+     * Filtered and guard-cell summed exactly as the electrostatic solvers consume
+     * it, without touching the registered rho_fp. Single level only.
+     */
+    [[nodiscard]] std::unique_ptr<amrex::MultiFab> DepositScratchRho (int lev);
+
     // Magnetostatic Solver Interface
     MagnetostaticSolver::VectorPoissonBoundaryHandler m_vector_poisson_boundary_handler;
     amrex::Real magnetostatic_solver_required_precision = amrex::Real(1.e-11);

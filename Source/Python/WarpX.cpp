@@ -249,6 +249,12 @@ void init_WarpX (py::module& m)
             py::arg("potential"),
             "Sets the EB potential string and updates the function parser."
         )
+        .def("solve_poisson_efield",
+            [] (WarpX& wx) { wx.SolvePoissonEfield(); },
+            "Deposit charge from all species, solve Poisson with the current EB and "
+            "domain boundary conditions, replace Efield_fp with the result, and "
+            "publish phi_fp when it is registered."
+        )
         .def("run_div_cleaner",
             [] (WarpX& wx) { wx.ProjectionCleanDivB(); },
             "Executes projection based divergence cleaner on loaded Bfield_fp_external."
