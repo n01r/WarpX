@@ -15,9 +15,12 @@
 #include "Utils/Parser/ParserUtils.H"
 #include "WarpX.H"
 
-#include <AMReX_GpuAtomic.H>
+#include <AMReX_Array.H>
 #include <AMReX_Config.H>
+#include <AMReX_EBFabFactory.H>
+#include <AMReX_Extension.H>
 #include <AMReX_Geometry.H>
+#include <AMReX_GpuAtomic.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
@@ -86,6 +89,7 @@ ChargeOnEB::ChargeOnEB (const std::string& rd_name)
 }
 // end constructor
 
+
 // function that computes the charge at the surface of the EB
 void ChargeOnEB::ComputeDiags (const int step)
 {
@@ -96,7 +100,7 @@ void ChargeOnEB::ComputeDiags (const int step)
         throw std::runtime_error("ChargeOnEB::ComputeDiags only works when EBs are enabled at runtime");
     }
 #if ((defined WARPX_DIM_3D) && (defined AMREX_USE_EB))
-    using ablastr::fields::Direction;
+    using warpx::fields::FieldType;
 
     // get a reference to WarpX instance
     auto & warpx = WarpX::GetInstance();
@@ -104,42 +108,49 @@ void ChargeOnEB::ComputeDiags (const int step)
     // Only compute the integral on level 0
     int const lev = 0;
 
-    // get MultiFab data at lev
-    using warpx::fields::FieldType;
-    const amrex::MultiFab & Ex = *warpx.m_fields.get(FieldType::Efield_fp, Direction{0}, lev);
-    const amrex::MultiFab & Ey = *warpx.m_fields.get(FieldType::Efield_fp, Direction{1}, lev);
-    const amrex::MultiFab & Ez = *warpx.m_fields.get(FieldType::Efield_fp, Direction{2}, lev);
+    m_data[0] = WeightedChargeOnEB(
+        warpx.m_fields.get_alldirs(FieldType::Efield_fp, lev), lev,
+        m_do_parser_weighting ? m_parser_weighting.get() : nullptr);
+#endif
+}
+// end void ChargeOnEB::ComputeDiags
+
+amrex::Real
+WeightedChargeOnEB (
+    ablastr::fields::VectorField const & Efield,
+    int const lev,
+    amrex::Parser const * const weighting)
+{
+#if (defined AMREX_USE_EB) && ((defined WARPX_DIM_3D) || (defined WARPX_DIM_RZ))
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(EB::enabled(),
+        "WeightedChargeOnEB requires embedded boundaries to be enabled");
+
+    auto & warpx = WarpX::GetInstance();
 
     // get EB structures
     amrex::EBFArrayBoxFactory const& eb_box_factory = warpx.fieldEBFactory(lev);
     amrex::FabArray<amrex::EBCellFlagFab> const& eb_flag = eb_box_factory.getMultiEBCellFlagFab();
     amrex::MultiCutFab const& eb_bnd_cent = eb_box_factory.getBndryCent();
     amrex::MultiCutFab const& eb_bnd_normal = eb_box_factory.getBndryNormal();
-    amrex::Array<const amrex::MultiCutFab*,AMREX_SPACEDIM> eb_area_fraction = eb_box_factory.getAreaFrac();
+    amrex::Array<const amrex::MultiCutFab*,AMREX_SPACEDIM> eb_area_fraction =
+        eb_box_factory.getAreaFrac();
 
-    // get surface integration element
     const amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> dx = warpx.Geom(lev).CellSizeArray();
-    amrex::Real const dSx = dx[1]*dx[2];
-    amrex::Real const dSy = dx[2]*dx[0];
-    amrex::Real const dSz = dx[0]*dx[1];
-
-    // Required for parser
     const amrex::RealBox& real_box = warpx.Geom(lev).ProbDomain();
-    const bool do_parser_weighting = m_do_parser_weighting;
-    auto fun_weightingparser =
-            utils::parser::compileParser<3>(m_parser_weighting.get());
 
-    // Integral to calculate
+    // optional spatial weighting w(x,y,z); compileParser handles a null parser
+    const bool do_weighting = (weighting != nullptr);
+    auto fun_weightingparser = utils::parser::compileParser<3>(weighting);
+
     amrex::Gpu::Buffer<amrex::Real> surface_integral({0.0_rt});
     amrex::Real* surface_integral_pointer = surface_integral.data();
 
-    // Loop over boxes
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(Ex, TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    for (amrex::MFIter mfi(*Efield[0], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
-      const amrex::Box & box = mfi.tilebox( amrex::IntVect::TheCellVector() );
+        const amrex::Box & box = mfi.tilebox( amrex::IntVect::TheCellVector() );
 
         // Skip boxes that do not intersect with the embedded boundary
         // (i.e. either fully covered or fully regular)
@@ -147,18 +158,27 @@ void ChargeOnEB::ComputeDiags (const int step)
         if (fab_type == amrex::FabType::regular) { continue; }
         if (fab_type == amrex::FabType::covered) { continue; }
 
-        // Extract data for electric field
-        const amrex::Array4<const amrex::Real> & Ex_arr = Ex.array(mfi);
-        const amrex::Array4<const amrex::Real> & Ey_arr = Ey.array(mfi);
-        const amrex::Array4<const amrex::Real> & Ez_arr = Ez.array(mfi);
-
-        // Extract data for EB
         auto const& eb_flag_arr = eb_flag.array(mfi);
         const amrex::Array4<const amrex::Real> & eb_bnd_normal_arr = eb_bnd_normal.array(mfi);
         const amrex::Array4<const amrex::Real> & eb_bnd_cent_arr = eb_bnd_cent.array(mfi);
+
+#if (defined WARPX_DIM_3D)
+        const amrex::Array4<const amrex::Real> & Ex_arr = Efield[0]->array(mfi);
+        const amrex::Array4<const amrex::Real> & Ey_arr = Efield[1]->array(mfi);
+        const amrex::Array4<const amrex::Real> & Ez_arr = Efield[2]->array(mfi);
         const amrex::Array4<const amrex::Real> & dSx_fraction_arr = eb_area_fraction[0]->array(mfi);
         const amrex::Array4<const amrex::Real> & dSy_fraction_arr = eb_area_fraction[1]->array(mfi);
         const amrex::Array4<const amrex::Real> & dSz_fraction_arr = eb_area_fraction[2]->array(mfi);
+        amrex::Real const dSx = dx[1]*dx[2];
+        amrex::Real const dSy = dx[2]*dx[0];
+        amrex::Real const dSz = dx[0]*dx[1];
+#else
+        // RZ (axisymmetric, m=0): only Er and Ez contribute to the flux
+        const amrex::Array4<const amrex::Real> & Er_arr = Efield[0]->array(mfi);
+        const amrex::Array4<const amrex::Real> & Ez_arr = Efield[2]->array(mfi);
+        const amrex::Array4<const amrex::Real> & dSr_fraction_arr = eb_area_fraction[0]->array(mfi);
+        const amrex::Array4<const amrex::Real> & dSz_fraction_arr = eb_area_fraction[1]->array(mfi);
+#endif
 
         // amrex::For: iterations accumulate into the shared surface integral;
         // in serial (non-OpenMP) builds HostDevice::Atomic::Add is a plain +=,
@@ -173,40 +193,62 @@ void ChargeOnEB::ComputeDiags (const int step)
                 // (eb_normal points towards the *interior* of the EB)
                 int const i_n = (eb_bnd_normal_arr(i,j,k,0) > 0)? i : i+1;
                 int const j_n = (eb_bnd_normal_arr(i,j,k,1) > 0)? j : j+1;
-                int const k_n = (eb_bnd_normal_arr(i,j,k,2) > 0)? k : k+1;
 
                 // Find cell-centered point which is outside of the EB
-                // (eb_normal points towards the *interior* of the EB)
                 int i_c = i;
                 if ((eb_bnd_normal_arr(i,j,k,0)>0) && (eb_bnd_cent_arr(i,j,k,0)<=0)) { i_c -= 1; }
                 if ((eb_bnd_normal_arr(i,j,k,0)<0) && (eb_bnd_cent_arr(i,j,k,0)>=0)) { i_c += 1; }
                 int j_c = j;
                 if ((eb_bnd_normal_arr(i,j,k,1)>0) && (eb_bnd_cent_arr(i,j,k,1)<=0)) { j_c -= 1; }
                 if ((eb_bnd_normal_arr(i,j,k,1)<0) && (eb_bnd_cent_arr(i,j,k,1)>=0)) { j_c += 1; }
+
+#if (defined WARPX_DIM_3D)
+                int const k_n = (eb_bnd_normal_arr(i,j,k,2) > 0)? k : k+1;
                 int k_c = k;
                 if ((eb_bnd_normal_arr(i,j,k,2)>0) && (eb_bnd_cent_arr(i,j,k,2)<=0)) { k_c -= 1; }
                 if ((eb_bnd_normal_arr(i,j,k,2)<0) && (eb_bnd_cent_arr(i,j,k,2)>=0)) { k_c += 1; }
 
-                // Compute contribution to the surface integral $\int dS \cdot E$)
+                // Contribution to the surface integral $\int dS \cdot E$
                 amrex::Real local_integral_contribution = 0;
-                local_integral_contribution += Ex_arr(i_c,j_n,k_n)*dSx*(dSx_fraction_arr(i+1,j,k)-dSx_fraction_arr(i,j,k));
-                local_integral_contribution += Ey_arr(i_n,j_c,k_n)*dSy*(dSy_fraction_arr(i,j+1,k)-dSy_fraction_arr(i,j,k));
-                local_integral_contribution += Ez_arr(i_n,j_n,k_c)*dSz*(dSz_fraction_arr(i,j,k+1)-dSz_fraction_arr(i,j,k));
+                local_integral_contribution += Ex_arr(i_c,j_n,k_n)*dSx
+                    *(dSx_fraction_arr(i+1,j,k)-dSx_fraction_arr(i,j,k));
+                local_integral_contribution += Ey_arr(i_n,j_c,k_n)*dSy
+                    *(dSy_fraction_arr(i,j+1,k)-dSy_fraction_arr(i,j,k));
+                local_integral_contribution += Ez_arr(i_n,j_n,k_c)*dSz
+                    *(dSz_fraction_arr(i,j,k+1)-dSz_fraction_arr(i,j,k));
 
                 // Add weighting if requested by user
-                if (do_parser_weighting) {
-                    // Get the 3D position of the centroid of surface element
-                    const amrex::Real x = (i + 0.5_rt + eb_bnd_cent_arr(i,j,k,0))*dx[0] + real_box.lo(0);
-                    const amrex::Real y = (j + 0.5_rt + eb_bnd_cent_arr(i,j,k,1))*dx[1] + real_box.lo(1);
-                    const amrex::Real z = (k + 0.5_rt + eb_bnd_cent_arr(i,j,k,2))*dx[2] + real_box.lo(2);
-                    // Apply weighting
+                if (do_weighting) {
+                    // 3D position of the centroid of the surface element
+                    const amrex::Real x =
+                        (i + 0.5_rt + eb_bnd_cent_arr(i,j,k,0))*dx[0] + real_box.lo(0);
+                    const amrex::Real y =
+                        (j + 0.5_rt + eb_bnd_cent_arr(i,j,k,1))*dx[1] + real_box.lo(1);
+                    const amrex::Real z =
+                        (k + 0.5_rt + eb_bnd_cent_arr(i,j,k,2))*dx[2] + real_box.lo(2);
                     local_integral_contribution *= fun_weightingparser(x, y, z);
                 }
+#else
+                // AMReX stores the RZ area fractions as bare 2D-Cartesian
+                // quantities (ScaleAreas multiplies by cell_size only), so the
+                // cylindrical measure 2*pi*r is applied here, at the radius of
+                // the EB surface centroid.
+                const amrex::Real r =
+                    (i + 0.5_rt + eb_bnd_cent_arr(i,j,k,0))*dx[0] + real_box.lo(0);
+                amrex::Real local_integral_contribution =
+                    2._rt * MathConst::pi * r * (
+                      Er_arr(i_c,j_n,k)*dx[1]*(dSr_fraction_arr(i+1,j,k)-dSr_fraction_arr(i,j,k))
+                    + Ez_arr(i_n,j_c,k)*dx[0]*(dSz_fraction_arr(i,j+1,k)-dSz_fraction_arr(i,j,k)) );
 
-                // Given that only a tiny fraction of the cells have a non-zero contribution
-                // (the ones that intersect with the EB), it is not clear whether ReduceOpSum
-                // or AtomicAdd would be faster. However, the implementation with AtomicAdd is easier.
-                amrex::HostDevice::Atomic::Add( surface_integral_pointer, local_integral_contribution );
+                if (do_weighting) {
+                    // in RZ the parser's x is the radius and y is zero
+                    const amrex::Real z =
+                        (j + 0.5_rt + eb_bnd_cent_arr(i,j,k,1))*dx[1] + real_box.lo(1);
+                    local_integral_contribution *= fun_weightingparser(r, 0._rt, z);
+                }
+#endif
+                amrex::HostDevice::Atomic::Add( surface_integral_pointer,
+                                                local_integral_contribution );
         });
     }
 
@@ -214,9 +256,13 @@ void ChargeOnEB::ComputeDiags (const int step)
     surface_integral.copyToHost();
     amrex::Real surface_integral_value = *(surface_integral.hostData());
     amrex::ParallelDescriptor::ReduceRealSum( surface_integral_value );
+    return PhysConst::epsilon_0 * surface_integral_value;
 
-    // save data
-    m_data[0] = PhysConst::epsilon_0 * surface_integral_value;
+#else
+    amrex::ignore_unused(Efield, lev, weighting);
+    WARPX_ABORT_WITH_MESSAGE(
+        "WeightedChargeOnEB is only implemented for 3D and RZ with embedded boundaries");
+    return 0._rt;
 #endif
 }
-// end void ChargeOnEB::ComputeDiags
+// end amrex::Real WeightedChargeOnEB

@@ -10,9 +10,27 @@
 
 #include "ReducedDiags.H"
 
+#include <ablastr/fields/MultiFabRegister.H>
+
 #include <AMReX_Parser.H>
+#include <AMReX_REAL.H>
 
 #include <string>
+
+/**
+ * \brief Weighted induced charge on the embedded boundary.
+ *
+ * Computes \f$\epsilon_0 \oint w(x,y,z)\, \mathbf{E}\cdot\mathbf{n}\, dS\f$ over the
+ * embedded boundary, with the weighting evaluated at the boundary centroid.
+ * Implemented for 3D and RZ (axisymmetric, m=0).
+ *
+ * @param[in] Efield field to integrate, e.g. Efield_fp or a stored unit field
+ * @param[in] lev refinement level
+ * @param[in] weighting optional weighting \f$w(x,y,z)\f$; nullptr means \f$w=1\f$
+ */
+amrex::Real
+WeightedChargeOnEB (ablastr::fields::VectorField const & Efield, int lev,
+                    amrex::Parser const * weighting = nullptr);
 
 /**
  *  This class mainly contains a function that
