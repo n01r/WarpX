@@ -142,6 +142,22 @@ WeightedChargeOnEB (
     const bool do_weighting = (weighting != nullptr);
     auto fun_weightingparser = utils::parser::compileParser<3>(weighting);
 
+    // The kernel below samples Efield one cell outside the cell it integrates:
+    // i_c is shifted to i-1 or i+1, and the nodal indices i_n/j_n/k_n may be
+    // i+1/j+1/k+1. A cut cell touching a box boundary therefore reads into the
+    // ghost region. Callers that drive an electrostatic solve at run time
+    // (set_potential_on_eb + solve_poisson_efield) leave those ghosts stale, so
+    // without this fill the integral depends on the domain decomposition: with
+    // one box the embedded boundary is interior and every such read lands in
+    // valid data, while a decomposed run reads uninitialised ghosts and returns
+    // a different charge. Fill them here so the result is a function of the
+    // valid data alone and no caller has to know about this precondition.
+    // VectorField is std::array<MultiFab*,3>, so the pointees are non-const.
+    const amrex::Periodicity period = warpx.Geom(lev).periodicity();
+    for (int idim = 0; idim < 3; ++idim) {
+        if (Efield[idim] != nullptr) { Efield[idim]->FillBoundary(period); }
+    }
+
     amrex::Gpu::Buffer<amrex::Real> surface_integral({0.0_rt});
     amrex::Real* surface_integral_pointer = surface_integral.data();
 
