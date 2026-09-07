@@ -44,6 +44,7 @@
 #include <AMReX_MLEBNodeFDLap_K.H>
 #include <AMReX_MLEBNodeFDLaplacian.H>
 #include <AMReX_MLMG.H>
+#include <AMReX_MultiCutFab.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Parser.H>
@@ -56,6 +57,65 @@ using namespace amrex::literals;
 
 namespace {
 
+/** Edge-centroid arrays that stay valid on boxes carrying no cut cells.
+ *
+ * ``MultiCutFab`` only allocates data where the box FabType is
+ * ``singlevalued``, and ``MultiCutFab::const_array`` checks this with
+ * ``AMREX_ASSERT`` only -- a no-op in a Release build. Reading it on a fully
+ * regular or fully covered box is therefore undefined behaviour, which shows up
+ * once the domain is decomposed finely enough that some boxes miss the embedded
+ * boundary entirely (e.g. a radial split in RZ puts the outer boxes off the
+ * conductor). AMReX's own ``MLEBNodeFDLaplacian::Fapply`` guards this with
+ * ``edgecent[0]->ok(mfi)`` and dispatches to a non-EB kernel.
+ *
+ * WarpX has no non-EB *transpose* kernel, and dispatching only the forward path
+ * would mix gather and scatter semantics across a box boundary and break the
+ * ``SumBoundary`` assembly. Instead we hand the EB kernels an array of 1.0 --
+ * the sentinel for a fully open edge -- on those boxes, which makes every
+ * ``(ec == 1.0) ? 1.0 : ...`` branch take the uncut path and reduces the EB
+ * stencil exactly to the non-EB one.
+ */
+class EdgeCentFallback
+{
+public:
+    explicit EdgeCentFallback (int lev)
+    {
+        auto const& edge_cent =
+            WarpX::GetInstance().fieldEBFactory(lev).getEdgeCent();
+        for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+            // The adjoint weighting potential is only defined with an embedded
+            // boundary, so the cut-cell data must exist; getEdgeCent() returns
+            // null pointers only when the factory is not an EBFArrayBoxFactory.
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(edge_cent[idim] != nullptr,
+                "AdjointWeightingSolve requires embedded boundaries to be enabled");
+            m_ones[idim].define(edge_cent[idim]->boxArray(),
+                                edge_cent[idim]->DistributionMap(),
+                                1, edge_cent[idim]->nGrow());
+            m_ones[idim].setVal(1.0_rt);
+        }
+    }
+
+    /** True when this box actually carries cut-cell data. */
+    [[nodiscard]] static bool hasCutData (
+        amrex::Array<const amrex::MultiCutFab*,AMREX_SPACEDIM> const& edge_cent,
+        amrex::MFIter const& mfi)
+    {
+        // non-null is a precondition, asserted in the constructor
+        return edge_cent[0]->ok(mfi);
+    }
+
+    [[nodiscard]] amrex::Array4<amrex::Real const> array (
+        amrex::Array<const amrex::MultiCutFab*,AMREX_SPACEDIM> const& edge_cent,
+        amrex::MFIter const& mfi, int idim) const
+    {
+        return hasCutData(edge_cent, mfi) ? edge_cent[idim]->const_array(mfi)
+                                          : m_ones[idim].const_array(mfi);
+    }
+
+private:
+    amrex::Array<amrex::MultiFab,AMREX_SPACEDIM> m_ones;
+};
+
 /** Matrix-free A and A^T on the free-node block, with the scratch buffers the
  * Krylov iteration would otherwise reallocate on every apply.
  */
@@ -67,7 +127,8 @@ public:
         : m_dmsk(&dmsk), m_lev(lev),
           m_period(WarpX::GetInstance().Geom(lev).periodicity()),
           m_xg(ba, dm, 1, 1),
-          m_owner(amrex::OwnerMask(m_xg, m_period))
+          m_owner(amrex::OwnerMask(m_xg, m_period)),
+          m_ec_fallback(lev)
     {}
 
     /** y = A x, or y = A^T x when `transpose`. */
@@ -88,6 +149,8 @@ private:
     amrex::Periodicity m_period;
     mutable amrex::MultiFab m_xg;
     std::unique_ptr<amrex::iMultiFab> m_owner;
+    // built once: apply() runs on every Krylov iteration
+    EdgeCentFallback m_ec_fallback;
 };
 
 void AdjointOperator::restrictToFreeRows (amrex::MultiFab& y) const
@@ -139,10 +202,11 @@ void AdjointOperator::apply (amrex::MultiFab& y, amrex::MultiFab const& x,
         auto const& ls = levset.const_array(mfi);
         auto const& dm = m_dmsk->const_array(mfi);
         auto const& own = m_owner->const_array(mfi);
-        auto const& ecx = edge_cent[0]->const_array(mfi);
-        auto const& ecy = edge_cent[1]->const_array(mfi);
+        // boxes with no cut cells carry no MultiCutFab data; see EdgeCentFallback
+        auto const& ecx = m_ec_fallback.array(edge_cent, mfi, 0);
+        auto const& ecy = m_ec_fallback.array(edge_cent, mfi, 1);
 #ifndef WARPX_DIM_RZ
-        auto const& ecz = edge_cent[2]->const_array(mfi);
+        auto const& ecz = m_ec_fallback.array(edge_cent, mfi, 2);
 #endif
 
         if (transpose) {
@@ -265,13 +329,16 @@ void ComputeNodeMinScale (amrex::MultiFab& scale_mf, int lev)
     auto& warpx = WarpX::GetInstance();
     auto const& edge_cent = warpx.fieldEBFactory(lev).getEdgeCent();
 
+    const EdgeCentFallback ec_fallback(lev);
+
     for (amrex::MFIter mfi(scale_mf); mfi.isValid(); ++mfi) {
         const amrex::Box& vbx = mfi.validbox();
         auto const& sa = scale_mf.array(mfi);
-        auto const& ecx = edge_cent[0]->const_array(mfi);
-        auto const& ecy = edge_cent[1]->const_array(mfi);
+        // boxes with no cut cells carry no MultiCutFab data; see EdgeCentFallback
+        auto const& ecx = ec_fallback.array(edge_cent, mfi, 0);
+        auto const& ecy = ec_fallback.array(edge_cent, mfi, 1);
 #ifndef WARPX_DIM_RZ
-        auto const& ecz = edge_cent[2]->const_array(mfi);
+        auto const& ecz = ec_fallback.array(edge_cent, mfi, 2);
 #endif
         amrex::ParallelFor(vbx,
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
@@ -768,10 +835,13 @@ void WarpXFinalizeChargeFunctionalPsi (amrex::MultiFab& psi, int lev)
     const amrex::Real inv_eps0_dV = 1._rt / (PhysConst::epsilon_0 * dx[0]*dx[1]*dx[2]);
 #endif
 
+    const EdgeCentFallback ec_fallback(lev);
+
     for (amrex::MFIter mfi(psi); mfi.isValid(); ++mfi) {
         auto const& pa = psi.array(mfi);
-        auto const& ecx = edge_cent[0]->const_array(mfi);
-        auto const& ecy = edge_cent[1]->const_array(mfi);
+        // boxes with no cut cells carry no MultiCutFab data; see EdgeCentFallback
+        auto const& ecx = ec_fallback.array(edge_cent, mfi, 0);
+        auto const& ecy = ec_fallback.array(edge_cent, mfi, 1);
 #ifndef WARPX_DIM_RZ
         auto const& ecz = edge_cent[2]->const_array(mfi);
 #endif
