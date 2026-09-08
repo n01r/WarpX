@@ -6,20 +6,21 @@
 
 """Quasi-static harmonic voltage clamp for driven embedded-boundary electrodes.
 
-Holds several embedded conductors at prescribed potentials during an
-electromagnetic run without a Poisson solve per step.
+Controls quasi-static electrode-voltage estimates during an electromagnetic run
+without a Poisson solve per step.
 
 Per electrode ``k`` a charge-free unit field ``E_0k = -grad(phi_0k)`` is
-precomputed once, with electrode ``k`` at 1 V and all others grounded. Adding any
-combination ``sum_k V_k E_0k`` is a sum of discrete gradients, so it changes
-neither ``div(E)`` nor ``curl(E)``.
+precomputed once, with electrode ``k`` at 1 V and all others grounded. The
+correction is a linear combination of these fields. The EB Poisson gradient and
+native Maxwell divergence/curl need not form a compatible discrete complex, so
+this does not imply that native ``div(E)`` or ``curl(E)`` is unchanged everywhere.
 
 Per correction the effective voltages follow from the capacitance relation
 
     Q_j = Q_g,j + sum_k C_jk V_k   =>   V = C^-1 (Q - Q_g),
 
 where ``C_jk = eps0 * oint_j E_0k . n dS`` is the precomputed vacuum capacitance
-matrix, ``Q_j`` is the induced charge of the live field on electrode ``j`` and
+matrix, ``Q_j`` is the live EB-flux charge measurement for electrode ``j`` and
 ``Q_g,j`` is the plasma-induced charge with every electrode grounded. The feedback
 is ``delta_V = relaxation * (V_target - V)``, applied as ``E += sum_k delta_V_k E_0k``.
 
@@ -55,6 +56,8 @@ Usage::
 Supported envelope: driven (prescribed-potential) electrodes, grounded PEC outer
 boundaries, and in RZ nodal CIC deposition without a charge filter. Floating
 electrodes, circuit coupling and dielectric boundaries are not modelled.
+Grounded-adjoint agreement validates the selected discrete charge measurement;
+it does not by itself establish physical voltage control during particle collection.
 """
 
 
