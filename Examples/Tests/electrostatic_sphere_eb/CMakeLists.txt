@@ -39,6 +39,18 @@ endif()
 
 if(WarpX_EB)
     add_warpx_test(
+        test_3d_adjoint_weighting_decomposed_picmi  # name
+        3  # dims
+        2  # nprocs (cut, fully regular and fully covered boxes)
+        "inputs_test_3d_adjoint_weighting_picmi.py --decomposed"  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+if(WarpX_EB)
+    add_warpx_test(
         test_3d_adjoint_weighting_picmi  # name
         3  # dims
         2  # nprocs (also exercises shared nodal box interfaces)

@@ -10,14 +10,27 @@ branch of the charge functional are covered as well.
    against the adjoint weighting potentials.
 2. Two independently biased electrodes -- the two hemispheres of the same EB --
    must reach different nonzero target potentials after one correction.
+
+``--decomposed`` additionally exercises cut-free regular and covered boxes. The
+translated sphere contains a whole box, including its one-cell Yee EB halo,
+while distant boxes do not intersect it. This guards every cut-centroid access
+in the adjoint assembly and finalization, not just convergence of the solve.
 """
+
+import argparse
 
 import numpy as np
 
 from pywarpx import picmi
 from pywarpx.multi_electrode_corrector import MultiElectrodeBiasCorrector
 
-nx = ny = nz = 24
+parser = argparse.ArgumentParser()
+parser.add_argument("--decomposed", action="store_true")
+args = parser.parse_args()
+
+nx = ny = nz = 32 if args.decomposed else 24
+center = np.full(3, -0.2) if args.decomposed else np.zeros(3)
+radius = 0.48 if args.decomposed else 0.22
 grid = picmi.Cartesian3DGrid(
     number_of_cells=[nx, ny, nz],
     lower_bound=[-0.8, -0.8, -0.8],
@@ -27,20 +40,45 @@ grid = picmi.Cartesian3DGrid(
     lower_boundary_conditions_particles=["absorbing"] * 3,
     upper_boundary_conditions_particles=["absorbing"] * 3,
     warpx_blocking_factor=8,
-    warpx_max_grid_size=24,
+    warpx_max_grid_size=8 if args.decomposed else 24,
 )
 solver = picmi.ElectromagneticSolver(grid=grid, method="Yee", cfl=0.9)
 eb = picmi.EmbeddedBoundary(
-    implicit_function="-(x*x+y*y+z*z-radius*radius)",
+    implicit_function="-((x-xc)**2+(y-yc)**2+(z-zc)**2-radius*radius)",
     potential=0.0,
-    radius=0.22,
+    radius=radius,
+    xc=center[0],
+    yc=center[1],
+    zc=center[2],
 )
 
 # deliberately off-node, spread over all octants
+positions = np.array(
+    [
+        [0.3123, 0.2051, 0.2637],
+        [-0.4271, 0.3311, -0.3173],
+        [0.1317, -0.4247, 0.1179],
+        [-0.2213, 0.0189, -0.4121],
+    ]
+)
+if args.decomposed:
+    positions = center + np.array(
+        [
+            [0.4013, 0.3021, 0.3517],
+            [-0.3817, 0.3511, -0.3413],
+            [0.3617, -0.3947, 0.3079],
+            [-0.3613, 0.3189, -0.4021],
+        ]
+    )
+
+# The complete CIC support stays outside the conductor and inside the domain.
+dx = 1.6 / nx
+assert np.all(np.linalg.norm(positions - center, axis=1) > radius + np.sqrt(3) * dx)
+assert np.all(np.abs(positions) + dx < 0.8)
 distribution = picmi.ParticleListDistribution(
-    x=[0.3123, -0.4271, 0.1317, -0.2213],
-    y=[0.2051, 0.3311, -0.4247, 0.0189],
-    z=[0.2637, -0.3173, 0.1179, -0.4121],
+    x=positions[:, 0],
+    y=positions[:, 1],
+    z=positions[:, 2],
     ux=[0.0] * 4,
     uy=[0.0] * 4,
     uz=[0.0] * 4,
@@ -70,8 +108,8 @@ corrector = MultiElectrodeBiasCorrector(
     sim=sim,
     correction_interval=1,
     electrodes=[
-        {"name": "upper", "region": "(z>0.0)", "potential": +250.0},
-        {"name": "lower", "region": "(z<=0.0)", "potential": -400.0},
+        {"name": "upper", "region": f"(z>{center[2]})", "potential": +250.0},
+        {"name": "lower", "region": f"(z<={center[2]})", "potential": -400.0},
     ],
     qg_mode="reciprocity",
     adjoint_tolerance=2.0e-10,
@@ -81,32 +119,60 @@ corrector = MultiElectrodeBiasCorrector(
 
 sim.initialize_inputs()
 sim.initialize_warpx()
-corrector.setup_after_init()
-
 warpx = corrector._warpx()
 
-# --- the discrete adjoint identity on the whole grounded conductor ---------
+if args.decomposed:
+    # Check the actual partition geometrically. For a sphere, nearest/farthest
+    # points of each box give exact regular/covered bounds; include the one-cell
+    # EB halo used by the Yee solver when determining whether cut data exist.
+    boxes = warpx.boxArray(0)
+    assert boxes.size > 1, "the decomposed test requires multiple boxes"
+    n_regular = n_covered = 0
+    for box in boxes:
+        lo = -0.8 + dx * (np.array([box.small_end[d] for d in range(3)]) - 1)
+        hi = -0.8 + dx * (np.array([box.big_end[d] for d in range(3)]) + 2)
+        nearest = np.maximum(np.maximum(lo - center, center - hi), 0.0)
+        farthest = np.maximum(np.abs(lo - center), np.abs(hi - center))
+        n_regular += np.linalg.norm(nearest) > radius
+        n_covered += np.linalg.norm(farthest) < radius
+    print(
+        f"3D partition: {boxes.size} boxes, "
+        f"{n_regular} geometrically regular, {n_covered} geometrically covered"
+    )
+    assert n_regular > 0, "the fixture needs cut-free regular boxes"
+    assert n_covered > 0, "the fixture needs cut-free covered boxes"
+
+corrector.setup_after_init()
+
+# --- the discrete adjoint identity for each grounded hemisphere ------------
 warpx.set_potential_on_eb("0.0")
 warpx.solve_poisson_efield()
-q_solve = float(warpx.compute_eb_charge(weighting="1", field="Efield_fp"))
-q_adjoint = float(
-    sum(warpx.grounded_charge_from_adjoint(psi_fields=corrector._psi_names, lev=0))
+q_solve = np.array(
+    [
+        warpx.compute_eb_charge(weighting=region, field="Efield_fp")
+        for region in corrector.regions
+    ]
+)
+q_adjoint = np.asarray(
+    warpx.grounded_charge_from_adjoint(psi_fields=corrector._psi_names, lev=0)
 )
 
-scale = max(abs(q_solve), abs(q_adjoint), 1.0e-30)
-rel_error = abs(q_adjoint - q_solve) / scale
-print(
-    "3D adjoint reciprocity: "
-    f"grounded_solve={q_solve:+.16e} C, "
-    f"adjoint={q_adjoint:+.16e} C, rel_error={rel_error:.3e}"
-)
-assert np.signbit(q_adjoint) == np.signbit(q_solve), (
-    "3D adjoint and grounded solve disagree in sign: "
-    f"{q_adjoint:+.16e} vs {q_solve:+.16e} C"
-)
-assert rel_error < 2.0e-6, (
-    f"3D discrete adjoint identity failed: relative error {rel_error:.3e} >= 2e-6"
-)
+for name, grounded, adjoint in zip(corrector.names, q_solve, q_adjoint):
+    scale = max(abs(grounded), abs(adjoint), 1.0e-30)
+    rel_error = abs(adjoint - grounded) / scale
+    print(
+        f"3D adjoint reciprocity ({name}): "
+        f"grounded_solve={grounded:+.16e} C, "
+        f"adjoint={adjoint:+.16e} C, rel_error={rel_error:.3e}"
+    )
+    assert np.signbit(adjoint) == np.signbit(grounded), (
+        f"3D adjoint and grounded solve disagree in sign for {name}: "
+        f"{adjoint:+.16e} vs {grounded:+.16e} C"
+    )
+    assert rel_error < 2.0e-6, (
+        f"3D discrete adjoint identity failed for {name}: "
+        f"relative error {rel_error:.3e} >= 2e-6"
+    )
 
 # --- drive both electrodes and re-measure the live field -------------------
 warpx.set_potential_on_eb(corrector.potential_expression)

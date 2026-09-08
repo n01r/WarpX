@@ -633,6 +633,7 @@ void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
     // NOT dmsk, which also marks the outer walls. An edge straddling a grounded
     // wall deposits normally and the wall node is discarded below.
     rhs.setVal(0.0);
+    const EdgeCentFallback ec_fallback(lev);
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         const amrex::Real dxi = 1._rt / dx[idim];
@@ -646,7 +647,7 @@ void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
         {
             auto const& fa = f[idim].const_array(mfi);
             auto const& ls = levset.const_array(mfi);
-            auto const& ec = edge_cent[idim]->const_array(mfi);
+            auto const& ec = ec_fallback.array(edge_cent, mfi, idim);
             auto const& ra = rhs.array(mfi);
             auto const& own = owner->const_array(mfi);
 
@@ -843,7 +844,7 @@ void WarpXFinalizeChargeFunctionalPsi (amrex::MultiFab& psi, int lev)
         auto const& ecx = ec_fallback.array(edge_cent, mfi, 0);
         auto const& ecy = ec_fallback.array(edge_cent, mfi, 1);
 #ifndef WARPX_DIM_RZ
-        auto const& ecz = edge_cent[2]->const_array(mfi);
+        auto const& ecz = ec_fallback.array(edge_cent, mfi, 2);
 #endif
         amrex::ParallelFor(mfi.validbox(),
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
