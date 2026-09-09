@@ -15,6 +15,10 @@ branch of the charge functional are covered as well.
 translated sphere contains a whole box, including its one-cell Yee EB halo,
 while distant boxes do not intersect it. This guards every cut-centroid access
 in the adjoint assembly and finalization, not just convergence of the solve.
+
+``--actuator-gradient ordinary`` builds the unit fields from WarpX's full-grid
+gradient rather than the cut-edge one. The assertions are unchanged, because the
+capacitance is measured from whichever unit fields are actually applied.
 """
 
 import argparse
@@ -26,6 +30,9 @@ from pywarpx.multi_electrode_corrector import MultiElectrodeBiasCorrector
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--decomposed", action="store_true")
+parser.add_argument(
+    "--actuator-gradient", choices=["eb_aware", "ordinary"], default="eb_aware"
+)
 args = parser.parse_args()
 
 nx = ny = nz = 32 if args.decomposed else 24
@@ -112,6 +119,7 @@ corrector = MultiElectrodeBiasCorrector(
         {"name": "lower", "region": f"(z<={center[2]})", "potential": -400.0},
     ],
     qg_mode="reciprocity",
+    actuator_gradient=args.actuator_gradient,
     adjoint_tolerance=2.0e-10,
     adjoint_max_iterations=200,
     verbose=True,
@@ -183,7 +191,24 @@ assert np.max(np.abs(state["delta_voltage"])) > 1.0, (
     f"the clamp applied a negligible correction: {state['delta_voltage']}"
 )
 
-remeasured = corrector.measure_voltage_state()["voltage"]
+remeasured_state = corrector.measure_voltage_state()
+remeasured = remeasured_state["voltage"]
 target = np.asarray(corrector.v_target)
 print(f"target={target}, re-measured after correction={remeasured}")
 np.testing.assert_allclose(remeasured, target, rtol=1.0e-9, atol=1.0e-6)
+
+# Independently of C^-1 above: the measured EB flux charge must have moved by
+# exactly C @ dV, i.e. the calibrated gain describes the fields actually applied.
+# The entries of C differ between the two actuator representations; this closure
+# is what keeps the loop consistent under either.
+setup = corrector.setup_state()
+assert setup["actuator_gradient"] == args.actuator_gradient
+measured_dq = remeasured_state["field_charge"] - state["field_charge"]
+predicted_dq = setup["capacitance_matrix"] @ state["delta_voltage"]
+dq_scale = max(np.max(np.abs(predicted_dq)), np.finfo(float).tiny)
+dq_error = np.max(np.abs(measured_dq - predicted_dq)) / dq_scale
+print(f"actuator gain closure ({args.actuator_gradient}): rel. error {dq_error:.3e}")
+assert dq_error < 1.0e-9, (
+    "the applied unit fields do not reproduce the calibrated capacitance: "
+    f"measured dQ={measured_dq}, predicted C@dV={predicted_dq}"
+)

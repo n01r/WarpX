@@ -63,10 +63,61 @@ endif()
 
 if(WarpX_EB)
     add_warpx_test(
+        test_3d_adjoint_weighting_ordinary_actuator_picmi  # name
+        3  # dims
+        2  # nprocs
+        "inputs_test_3d_adjoint_weighting_picmi.py --actuator-gradient ordinary"  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+if(WarpX_EB)
+    add_warpx_test(
         test_rz_adjoint_weighting_picmi  # name
         RZ  # dims
         2  # nprocs (also exercises shared nodal box interfaces)
         inputs_test_rz_adjoint_weighting_picmi.py  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+if(WarpX_EB)
+    add_warpx_test(
+        test_rz_adjoint_weighting_ordinary_actuator_picmi  # name
+        RZ  # dims
+        2  # nprocs
+        "inputs_test_rz_adjoint_weighting_picmi.py --actuator-gradient ordinary"  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+# The clamp's actuator field must be compatible with the Yee Faraday update.
+# Both directions are registered: the ordinary gradient must leave B at roundoff,
+# and the EB-aware gradient must still grow it, so the two stay distinguishable.
+if(WarpX_EB)
+    add_warpx_test(
+        test_rz_clamp_actuator_faraday_ordinary_picmi  # name
+        RZ  # dims
+        2  # nprocs (the domain splits in r as well as z)
+        "inputs_test_rz_clamp_actuator_faraday_picmi.py --actuator-gradient ordinary"  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+if(WarpX_EB)
+    add_warpx_test(
+        test_rz_clamp_actuator_faraday_eb_aware_picmi  # name
+        RZ  # dims
+        2  # nprocs (the domain splits in r as well as z)
+        "inputs_test_rz_clamp_actuator_faraday_picmi.py --actuator-gradient eb_aware"  # inputs
         OFF  # analysis (the input contains numerical assertions)
         OFF  # checksum
         OFF  # dependency
