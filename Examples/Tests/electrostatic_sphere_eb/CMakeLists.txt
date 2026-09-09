@@ -124,6 +124,59 @@ if(WarpX_EB)
     )
 endif()
 
+# The Cartesian counterpart uses two physically separate conducting spheres, so
+# no single body carries two potentials. The registered 3-D adjoint tests do not
+# distinguish the actuator representations; these do.
+if(WarpX_EB)
+    add_warpx_test(
+        test_3d_clamp_actuator_faraday_ordinary_picmi  # name
+        3  # dims
+        2  # nprocs
+        "inputs_test_3d_clamp_actuator_faraday_picmi.py --actuator-gradient ordinary"  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+if(WarpX_EB)
+    add_warpx_test(
+        test_3d_clamp_actuator_faraday_eb_aware_picmi  # name
+        3  # dims
+        2  # nprocs
+        "inputs_test_3d_clamp_actuator_faraday_picmi.py --actuator-gradient eb_aware"  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+# Checkpoint/restart pair: afterInitEsolve does not fire on a restart, so the
+# clamp must rebuild its calibration from afterInitatRestart, exactly once.
+if(WarpX_EB)
+    add_warpx_test(
+        test_rz_clamp_restart_base_picmi  # name
+        RZ  # dims
+        2  # nprocs
+        inputs_test_rz_clamp_restart_base_picmi.py  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+if(WarpX_EB)
+    add_warpx_test(
+        test_rz_clamp_restart_picmi  # name
+        RZ  # dims
+        2  # nprocs
+        inputs_test_rz_clamp_restart_picmi.py  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        test_rz_clamp_restart_base_picmi  # dependency (reads its checkpoint)
+    )
+endif()
+
 if(WarpX_EB)
     add_warpx_test(
         test_rz_adjoint_weighting_decomposed_picmi  # name

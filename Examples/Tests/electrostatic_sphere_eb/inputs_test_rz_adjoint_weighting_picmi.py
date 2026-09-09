@@ -117,12 +117,37 @@ sim.initialize_warpx()
 warpx = corrector._warpx()
 mfr = corrector._mfr()
 
+# actuator_gradient is keyword-only and last, so a call written before it existed
+# still means what it did. Check the old positional form explicitly: every value
+# must land in the argument it was written for.
+legacy_positional = MultiElectrodeBiasCorrector(
+    sim,  # sim
+    3,  # correction_interval
+    electrodes,  # electrodes
+    0.5,  # relaxation
+    "grounded",  # qg_mode
+    3.0e-11,  # adjoint_tolerance
+    123,  # adjoint_max_iterations
+    False,  # verbose
+)
+assert legacy_positional.correction_interval == 3
+assert legacy_positional.relaxation == 0.5
+assert legacy_positional.qg_mode == "grounded"
+assert legacy_positional.adjoint_tolerance == 3.0e-11
+assert legacy_positional.adjoint_max_iterations == 123
+assert legacy_positional.verbose is False
+assert legacy_positional.actuator_gradient == "eb_aware"
+del legacy_positional
+
 # Setup drives several one-off Poisson solves, each of which overwrites
 # Efield_fp, and it leaves the EB parser holding the configured bias pattern. It
 # must hand the live EM field back exactly as it found it, in either actuator
 # representation. Put a distinctive nonzero field there first, so this is a real
 # comparison rather than a check that zero survives -- on a restart the loaded
 # field is not zero either.
+#
+# Guard cells are outside the contract: WarpX refills them at the start of every
+# step, so only the valid region is compared below.
 warpx.set_potential_on_eb("123.0*(z>0.0)")
 warpx.solve_poisson_efield()
 efield_before = {
@@ -262,4 +287,86 @@ print(
 assert np.max(comparison["relative_difference"]) < 1.0e-5, (
     "adjoint observer disagrees with the grounded solve per electrode: "
     f"{comparison['relative_difference']}"
+)
+
+# ---------------------------------------------------------------------------
+# Part 3: a failed setup must not leave the live field or the EB parser behind
+# ---------------------------------------------------------------------------
+# Runs last, because it deliberately raises partway through setup and the checks
+# above must see an undisturbed state. The grounded value is measured first so
+# the parser assertion below is discriminating rather than self-referential:
+# setup fails while the parser holds "0.0", so a missing restore is visible as
+# the grounded reading.
+warpx.set_potential_on_eb("0.0")
+warpx.solve_poisson_efield()
+q_grounded = float(warpx.compute_eb_charge(weighting="1", field="Efield_fp"))
+warpx.set_potential_on_eb(corrector.potential_expression)
+warpx.solve_poisson_efield()
+q_configured = float(warpx.compute_eb_charge(weighting="1", field="Efield_fp"))
+assert abs(q_configured - q_grounded) > 1.0e-3 * abs(q_configured), (
+    "the two EB potentials give indistinguishable charges, so the parser "
+    "restoration check below would not discriminate"
+)
+
+efield_before_failure = {
+    comp: mfr.get("Efield_fp", dir=corrector._Direction(comp), level=0).copy()
+    for comp in (0, 1, 2)
+}
+
+
+# Re-run setup on the existing corrector with a solve made to fail, rather than
+# building a second one: the unit-field MultiFab names are registered globally,
+# so a second corrector in the same process cannot allocate them. Allocation is
+# stubbed out for the same reason; the fields already exist from the real setup.
+original_save_efield = corrector._save_efield
+save_efield_calls = {"count": 0}
+
+
+def _failing_save_efield(lev):
+    save_efield_calls["count"] += 1
+    # call 1 is the pre-solve snapshot taken before the try block; call 2 is
+    # inside it, by which point the grounded solve has already overwritten
+    # Efield_fp and the parser holds "0.0"
+    if save_efield_calls["count"] == 2:
+        raise RuntimeError("simulated solver failure inside setup")
+    return original_save_efield(lev)
+
+
+corrector._ready = False
+corrector._alloc_vector_like_efield = lambda name, lev: None
+corrector._alloc_psi_fields = lambda lev: None
+corrector._save_efield = _failing_save_efield
+try:
+    corrector.setup_after_init()
+except RuntimeError as error:
+    assert "simulated solver failure" in str(error)
+else:
+    raise AssertionError("the failing setup fixture did not raise")
+finally:
+    corrector._save_efield = original_save_efield
+    del corrector._alloc_vector_like_efield, corrector._alloc_psi_fields
+    corrector._ready = True
+
+assert save_efield_calls["count"] == 2, (
+    "setup did not reach the snapshot inside the try block, so the failure was "
+    "raised before any state had been changed and proves nothing"
+)
+
+for comp in (0, 1, 2):
+    residual = mfr.get("Efield_fp", dir=corrector._Direction(comp), level=0).copy()
+    residual.saxpy(-1.0, efield_before_failure[comp], 0, 0, 1, 0)
+    assert residual.norm0(0, 0, False, False) == 0.0, (
+        f"a failed setup left Efield_fp component {comp} modified"
+    )
+
+# The parser must be back at the configured pattern, not the "0.0" it held when
+# the failure was raised.
+warpx.solve_poisson_efield()
+q_after_failure = float(warpx.compute_eb_charge(weighting="1", field="Efield_fp"))
+print(
+    f"EB charge after a failed setup: {q_after_failure:+.16e} C "
+    f"(configured {q_configured:+.16e}, grounded {q_grounded:+.16e})"
+)
+assert abs(q_after_failure - q_configured) <= 1.0e-12 * abs(q_configured), (
+    "a failed setup left the EB potential parser holding its setup value"
 )

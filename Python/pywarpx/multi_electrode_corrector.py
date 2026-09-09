@@ -93,7 +93,13 @@ class MultiElectrodeBiasCorrector:
         pairs the deposited charge density with the adjoint weighting potentials.
         ``"grounded"`` performs a real grounded Poisson solve per call, which is
         exact but costs one MLMG solve.
-    actuator_gradient : {"eb_aware", "ordinary"}, optional
+    adjoint_tolerance : float, optional
+        Relative residual tolerance for the adjoint weighting solves.
+    adjoint_max_iterations : int, optional
+        Maximum outer iteration count for the adjoint solves.
+    verbose : bool, optional
+        Print the capacitance matrix and the per-correction voltages.
+    actuator_gradient : {"eb_aware", "ordinary"}, keyword-only, optional
         Which discrete gradient of the setup potentials becomes the unit actuator
         field. ``"eb_aware"`` (default) uses the shortened fluid length on cut
         edges, which is the locally more accurate field but is not annihilated by
@@ -104,12 +110,19 @@ class MultiElectrodeBiasCorrector:
         capacitance measurement, the adjoint and the grounded cross-check are
         unchanged; the capacitance is always measured from the unit fields that
         are actually applied, so the feedback stays self-consistent either way.
-    adjoint_tolerance : float, optional
-        Relative residual tolerance for the adjoint weighting solves.
-    adjoint_max_iterations : int, optional
-        Maximum outer iteration count for the adjoint solves.
-    verbose : bool, optional
-        Print the capacitance matrix and the per-correction voltages.
+        Keyword-only and last so that existing positional calls are unaffected.
+
+    State contract for ``setup_after_init``
+    ---------------------------------------
+    Setup runs several one-off Poisson solves, each of which overwrites
+    ``Efield_fp`` and the embedded-boundary potential parser. On return, the
+    **valid** cells of ``Efield_fp`` and the parser expression are restored
+    exactly. Guard cells are deliberately *not* restored: WarpX treats them as
+    derived rather than as state -- ``OneStep_nosub`` refills them at the start of
+    every step ("E and B are up-to-date inside the domain only",
+    ``Source/Evolve/WarpXEvolve.cpp``), and both setup hooks run before the first
+    step. The restoration is protected by ``try``/``finally``, so a failed solve
+    cannot leave the live field or the parser holding a setup value.
     """
 
     def __init__(
@@ -119,10 +132,12 @@ class MultiElectrodeBiasCorrector:
         electrodes,
         relaxation=1.0,
         qg_mode="reciprocity",
-        actuator_gradient="eb_aware",
         adjoint_tolerance=1.0e-10,
         adjoint_max_iterations=200,
         verbose=False,
+        # keyword-only and last, so existing positional calls keep their meaning
+        *,
+        actuator_gradient="eb_aware",
     ):
         if not (0.0 < relaxation <= 1.0):
             raise ValueError("relaxation must be in (0, 1].")
@@ -204,24 +219,32 @@ class MultiElectrodeBiasCorrector:
         eb_aware = self.actuator_gradient == "eb_aware"
 
         saved = self._save_efield(lev)
-        warpx.set_potential_on_eb("0.0")
-        warpx.solve_poisson_efield(eb_aware_gradient=eb_aware)
-        grounded = self._save_efield(lev)
-
-        for k in range(self.n):
-            warpx.set_potential_on_eb(f"1.0*({self.regions[k]})")
+        try:
+            warpx.set_potential_on_eb("0.0")
             warpx.solve_poisson_efield(eb_aware_gradient=eb_aware)
-            for comp in (0, 1, 2):
-                direction = self._Direction(comp)
-                unit = self._mfr().get(self._unit_names[k], dir=direction, level=lev)
-                unit.copymf(
-                    self._mfr().get("Efield_fp", dir=direction, level=lev), 0, 0, 1, 0
-                )
-                unit.saxpy(-1.0, grounded[comp], 0, 0, 1, 0)
+            grounded = self._save_efield(lev)
 
-        # restore the live field and the configured EB potential
-        self._restore_efield(saved, lev)
-        warpx.set_potential_on_eb(self.potential_expression)
+            for k in range(self.n):
+                warpx.set_potential_on_eb(f"1.0*({self.regions[k]})")
+                warpx.solve_poisson_efield(eb_aware_gradient=eb_aware)
+                for comp in (0, 1, 2):
+                    direction = self._Direction(comp)
+                    unit = self._mfr().get(
+                        self._unit_names[k], dir=direction, level=lev
+                    )
+                    unit.copymf(
+                        self._mfr().get("Efield_fp", dir=direction, level=lev),
+                        0,
+                        0,
+                        1,
+                        0,
+                    )
+                    unit.saxpy(-1.0, grounded[comp], 0, 0, 1, 0)
+        finally:
+            # A failed solve must not leave the live field, or the EB parser,
+            # holding a setup value. See the state contract in the class docstring.
+            self._restore_efield(saved, lev)
+            warpx.set_potential_on_eb(self.potential_expression)
 
         # vacuum capacitance matrix C_jk = eps0 * oint_j E_0k . n dS
         self._capacitance = np.empty((self.n, self.n))
@@ -306,6 +329,12 @@ class MultiElectrodeBiasCorrector:
         }
 
     def _restore_efield(self, saved, lev):
+        """Restore the valid cells of Efield_fp. See the class state contract.
+
+        The trailing 0 is the ghost count: guard cells are deliberately left
+        alone, because WarpX refills them at the start of each step rather than
+        carrying them as state.
+        """
         mfr = self._mfr()
         for comp in (0, 1, 2):
             mfr.get("Efield_fp", dir=self._Direction(comp), level=lev).copymf(
@@ -348,16 +377,18 @@ class MultiElectrodeBiasCorrector:
 
         warpx = self._warpx()
         saved = self._save_efield(lev)
-        warpx.set_potential_on_eb("0.0")
-        warpx.solve_poisson_efield()
-        q_g = np.array(
-            [
-                warpx.compute_eb_charge(weighting=r, field="Efield_fp")
-                for r in self.regions
-            ]
-        )
-        self._restore_efield(saved, lev)
-        warpx.set_potential_on_eb(self.potential_expression)
+        try:
+            warpx.set_potential_on_eb("0.0")
+            warpx.solve_poisson_efield()
+            q_g = np.array(
+                [
+                    warpx.compute_eb_charge(weighting=r, field="Efield_fp")
+                    for r in self.regions
+                ]
+            )
+        finally:
+            self._restore_efield(saved, lev)
+            warpx.set_potential_on_eb(self.potential_expression)
         return q_g
 
     def _grounded_charge_via_reciprocity(self, lev):
