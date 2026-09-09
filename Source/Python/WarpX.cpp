@@ -320,6 +320,16 @@ void init_WarpX (py::module& m)
                 const auto dlo = ndom.smallEnd();
                 const auto dhi = ndom.bigEnd();
 
+                // A periodic direction has no wall: its domain-edge nodes are
+                // ordinary unknowns wrapped onto their images, not constrained
+                // rows. Marking them would pin the solution at the seam and
+                // silently pose a different operator, so drop those faces from
+                // the wall test rather than the whole node.
+                amrex::GpuArray<int, AMREX_SPACEDIM> is_periodic{};
+                for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+                    is_periodic[idim] = wx.Geom(lev).isPeriodic(idim);
+                }
+
                 for (amrex::MFIter mfi(dmsk); mfi.isValid(); ++mfi) {
                     auto const& dma = dmsk.array(mfi);
                     auto const& ls  = levset.const_array(mfi);
@@ -330,12 +340,13 @@ void init_WarpX (py::module& m)
 #ifdef WARPX_DIM_RZ
                             // r=0 is a regularity axis, not a grounded wall
                             const bool wall =
-                                (i >= dhi[0] || j <= dlo[1] || j >= dhi[1]);
+                                (!is_periodic[0] && i >= dhi[0]) ||
+                                (!is_periodic[1] && (j <= dlo[1] || j >= dhi[1]));
 #else
                             const bool wall =
-                                (i <= dlo[0] || i >= dhi[0] ||
-                                 j <= dlo[1] || j >= dhi[1] ||
-                                 k <= dlo[2] || k >= dhi[2]);
+                                (!is_periodic[0] && (i <= dlo[0] || i >= dhi[0])) ||
+                                (!is_periodic[1] && (j <= dlo[1] || j >= dhi[1])) ||
+                                (!is_periodic[2] && (k <= dlo[2] || k >= dhi[2]));
 #endif
                             dma(i,j,k) = (covered || wall) ? 1 : 0;
                         });

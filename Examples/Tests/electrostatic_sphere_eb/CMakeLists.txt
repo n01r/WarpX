@@ -124,6 +124,33 @@ if(WarpX_EB)
     )
 endif()
 
+# Periodic outer boundaries. A periodic direction has no wall, so its domain-edge
+# nodes are unknowns rather than constrained rows; charge is placed so that its
+# deposition support crosses the seam.
+if(WarpX_EB)
+    add_warpx_test(
+        test_3d_adjoint_weighting_periodic_picmi  # name
+        3  # dims
+        2  # nprocs
+        inputs_test_3d_adjoint_weighting_periodic_picmi.py  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
+if(WarpX_EB)
+    add_warpx_test(
+        test_rz_adjoint_weighting_periodic_picmi  # name
+        RZ  # dims
+        2  # nprocs
+        inputs_test_rz_adjoint_weighting_periodic_picmi.py  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
 # The Cartesian counterpart uses two physically separate conducting spheres, so
 # no single body carries two potentials. The registered 3-D adjoint tests do not
 # distinguish the actuator representations; these do.

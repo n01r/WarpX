@@ -29,6 +29,8 @@
 
 #include "AdjointWeightingPotential.H"
 #include "Diagnostics/ReducedDiags/ChargeOnEB.H"
+#include "EmbeddedBoundary/Enabled.H"
+#include "FieldSolver/ElectrostaticSolvers/ElectrostaticSolver.H"
 #include "Fields.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Utils/Parser/ParserUtils.H"
@@ -281,31 +283,45 @@ std::unique_ptr<amrex::MLEBNodeFDLaplacian> BuildAdjointPrecondLinOp (
 #endif
     linop->setEBDirichlet(0._rt);
 
-#ifdef WARPX_DIM_RZ
-    amrex::Array<amrex::LinOpBCType,AMREX_SPACEDIM> const lobc = {
-        amrex::LinOpBCType::Neumann, amrex::LinOpBCType::Dirichlet};
-    amrex::Array<amrex::LinOpBCType,AMREX_SPACEDIM> const hibc = {
-        amrex::LinOpBCType::Dirichlet, amrex::LinOpBCType::Dirichlet};
-#else
-    amrex::Array<amrex::LinOpBCType,AMREX_SPACEDIM> const lobc = {AMREX_D_DECL(
-        amrex::LinOpBCType::Dirichlet, amrex::LinOpBCType::Dirichlet,
-        amrex::LinOpBCType::Dirichlet)};
-    amrex::Array<amrex::LinOpBCType,AMREX_SPACEDIM> const hibc = lobc;
-#endif
-    linop->setDomainBC(lobc, hibc);
+    // Take the domain boundary types from the forward solver's own handler
+    // rather than restating them, so the preconditioner cannot drift from the
+    // operator it preconditions. DefinePhiBCs is idempotent; it maps PEC to
+    // Dirichlet, a periodic pair to Periodic, and keeps the RZ r=0 regularity
+    // axis Neumann. AssertSupportedOuterBoundaries has already refused every
+    // type the adjoint is not posed against; only the values are homogeneous
+    // here, and LinOpBCType carries no values.
+    auto& handler = *warpx.GetElectrostaticSolver().m_poisson_boundary_handler;
+    handler.DefinePhiBCs(warpx.Geom(lev));
+    linop->setDomainBC(handler.lobc, handler.hibc);
 
     return linop;
 }
 
-/** The adjoint is posed against a grounded reference. Refuse any other outer
- * boundary rather than returning a plausible but wrong weighting potential.
+/** The adjoint is posed against a grounded reference, with periodic directions
+ * carrying no reference of their own. Refuse any other outer boundary rather
+ * than returning a plausible but wrong weighting potential.
  */
-void AssertGroundedOuterBoundaries ()
+void AssertSupportedOuterBoundaries ()
 {
     auto const grounded = [] (FieldBoundaryType bc) {
         return bc == FieldBoundaryType::PEC;
     };
+    auto const periodic = [] (FieldBoundaryType bc) {
+        return bc == FieldBoundaryType::Periodic;
+    };
+
+    bool any_reference = false;
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+        // A periodic direction has no wall at all, so both ends must agree.
+        const bool periodic_pair = periodic(WarpX::field_boundary_lo[idim])
+                                && periodic(WarpX::field_boundary_hi[idim]);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            periodic_pair || !(periodic(WarpX::field_boundary_lo[idim])
+                            || periodic(WarpX::field_boundary_hi[idim])),
+            "The adjoint weighting potential needs a periodic direction to be "
+            "periodic at both ends.");
+        if (periodic_pair) { continue; }
+
 #ifdef WARPX_DIM_RZ
         // r = 0 is a regularity axis, not a wall
         const bool lo_ok = (idim == 0)
@@ -315,10 +331,18 @@ void AssertGroundedOuterBoundaries ()
         const bool lo_ok = grounded(WarpX::field_boundary_lo[idim]);
 #endif
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(lo_ok && grounded(WarpX::field_boundary_hi[idim]),
-            "The adjoint weighting potential requires grounded (PEC) outer field "
-            "boundaries on every wall; Neumann, periodic and open/PML references "
-            "are not supported.");
+            "The adjoint weighting potential requires grounded (PEC) or periodic "
+            "outer field boundaries; Neumann and open/PML references are not "
+            "supported.");
+        any_reference = true;
     }
+
+    // With every direction periodic the only Dirichlet reference left is the
+    // embedded conductor itself. Without one the operator is singular, so say so
+    // here rather than letting MLMG converge to an arbitrary additive constant.
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(any_reference || EB::enabled(),
+        "An all-periodic domain has no potential reference for the adjoint "
+        "weighting solve unless an embedded boundary supplies one.");
 }
 
 /** Per-node right-hand-side scale S = min(hp,hm) over the node's edges, the same
@@ -694,7 +718,7 @@ bool WarpXSolveAdjointWeighting (amrex::MultiFab& psi,
                                  int lev, amrex::Real tol, int max_iter,
                                  amrex::Real* final_res, int* iters_out)
 {
-    AssertGroundedOuterBoundaries();
+    AssertSupportedOuterBoundaries();
 
     auto& warpx = WarpX::GetInstance();
     const amrex::BoxArray& ba = psi.boxArray();
