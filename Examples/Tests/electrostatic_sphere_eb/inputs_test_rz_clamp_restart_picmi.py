@@ -15,7 +15,9 @@ reproduce the base run's to solve precision, and a correction must still drive
 the electrodes to target. Both are asserted rather than assumed.
 """
 
+import csv
 import json
+import pathlib
 
 import numpy as np
 
@@ -26,10 +28,21 @@ from pywarpx.callbacks import (
     installafterInitEsolve,
 )
 from pywarpx.multi_electrode_corrector import MultiElectrodeBiasCorrector
-from pywarpx.multi_electrode_logger import MultiElectrodeClampTelemetry
+from pywarpx.multi_electrode_logger import (
+    MultiElectrodeClampTelemetry,
+    _mpi_rank,
+)
 
 base_dir = "../test_rz_clamp_restart_base_picmi"
-total_steps = 15
+total_steps = 16
+# The step the base run checkpointed at, and so the last step it corrected.
+checkpoint_step = 10
+correction_interval = 2
+# The closing check re-measures the voltage against the target, so the run has
+# to end on a step the clamp actually corrected; otherwise it measures drift
+# accumulated since the last correction and not whether the loop closed.
+assert total_steps % correction_interval == 0
+assert checkpoint_step % correction_interval == 0
 
 grid = picmi.CylindricalGrid(
     number_of_cells=[24, 48],
@@ -70,7 +83,7 @@ sim = picmi.Simulation(
     warpx_embedded_boundary=eb,
     warpx_use_filter=False,
     verbose=0,
-    warpx_amr_restart=f"{base_dir}/diags/chk000010",
+    warpx_amr_restart=f"{base_dir}/diags/chk{checkpoint_step:06d}",
 )
 sim.add_species(
     electrons,
@@ -84,11 +97,21 @@ electrodes = [
 
 corrector = MultiElectrodeBiasCorrector(
     sim=sim,
-    correction_interval=5,
+    correction_interval=correction_interval,
     electrodes=electrodes,
     qg_mode="reciprocity",
     adjoint_tolerance=2.0e-10,
 )
+# The telemetry preserves an existing CSV whenever the run starts at a positive
+# step, so that a restart continues the base run's series rather than truncating
+# it. This test writes into its own directory, which CTest reuses between
+# invocations, so a leftover file from a previous run would be appended to and
+# the series would no longer be a record of this run alone. Start it clean.
+# Only rank 0 ever writes this file, so only rank 0 clears it: letting every
+# rank delete it races against rank 0's own write with no collective in between.
+if _mpi_rank() == 0:
+    pathlib.Path("clamp_telemetry.csv").unlink(missing_ok=True)
+
 telemetry = MultiElectrodeClampTelemetry(
     corrector, out_csv="clamp_telemetry.csv", setup_json="clamp_setup.json"
 )
@@ -105,8 +128,12 @@ def combined_setup():
 installafterInitEsolve(combined_setup)
 installafterInitatRestart(combined_setup)
 installafterEsolve(corrector.correct_field)
+# Log after the correction, so each row is the state the clamp left behind.
+# This is also what makes a duplicated setup registration observable: the
+# telemetry row series is the side effect the guide's warning is about.
+installafterEsolve(telemetry.log)
 
-sim.step(total_steps - 10)
+sim.step(total_steps - checkpoint_step)
 
 # afterInitEsolve does not fire on a restart and afterInitatRestart does, so
 # registering one function on both hooks must still set up exactly once.
@@ -138,6 +165,40 @@ print(f"capacitance rebuild max relative difference: {relative_difference:.3e}")
 assert relative_difference < 1.0e-12, (
     "the restarted run rebuilt a different capacitance matrix: max relative "
     f"difference {relative_difference:.3e}"
+)
+
+
+# The guide warns that registering the setup on both hooks can double-register
+# the runtime callbacks it installs. Counting setup calls only proves a function
+# ran once; the row series is the side effect that would actually be corrupted.
+# A restart appends to its own file, so its first logged step must lie strictly
+# after the checkpoint step: a re-corrected step would show up as a repeat.
+def _steps(path):
+    with open(path, encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    return [int(row["step"]) for row in rows]
+
+
+restart_steps = _steps("clamp_telemetry.csv")
+base_steps = _steps(f"{base_dir}/clamp_telemetry.csv")
+print(f"base logged steps={base_steps}")
+print(f"restart logged steps={restart_steps}")
+
+assert restart_steps, "the restarted run logged no telemetry rows"
+assert len(set(restart_steps)) == len(restart_steps), (
+    f"a step was logged more than once after the restart: {restart_steps}"
+)
+assert restart_steps == sorted(restart_steps), (
+    f"restart telemetry steps are not monotonic: {restart_steps}"
+)
+assert min(restart_steps) > checkpoint_step, (
+    f"the restart re-logged step {min(restart_steps)}, at or before the "
+    f"checkpoint step {checkpoint_step}: the clamp corrected an already "
+    "corrected step"
+)
+assert not set(base_steps) & set(restart_steps), (
+    "base and restart runs logged overlapping steps: "
+    f"{sorted(set(base_steps) & set(restart_steps))}"
 )
 
 state = corrector.last_correction_state()

@@ -80,7 +80,7 @@ electrodes = [
 
 corrector = MultiElectrodeBiasCorrector(
     sim=sim,
-    correction_interval=5,
+    correction_interval=2,
     electrodes=electrodes,
     qg_mode="reciprocity",
     adjoint_tolerance=2.0e-10,
@@ -102,6 +102,10 @@ def combined_setup():
 installafterInitEsolve(combined_setup)
 installafterInitatRestart(combined_setup)
 installafterEsolve(corrector.correct_field)
+# Log after the correction, so each row is the state the clamp left behind.
+# This is also what makes a duplicated setup registration observable: the
+# telemetry row series is the side effect the guide's warning is about.
+installafterEsolve(telemetry.log)
 
 sim.step(steps)
 
