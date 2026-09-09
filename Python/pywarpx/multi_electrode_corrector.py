@@ -14,6 +14,10 @@ precomputed once, with electrode ``k`` at 1 V and all others grounded. The
 correction is a linear combination of these fields. The EB Poisson gradient and
 native Maxwell divergence/curl need not form a compatible discrete complex, so
 this does not imply that native ``div(E)`` or ``curl(E)`` is unchanged everywhere.
+In particular the default ``actuator_gradient="eb_aware"`` field is not annihilated
+by the Yee Faraday stencil and drives a spurious boundary ``B``;
+``actuator_gradient="ordinary"`` selects the full-grid gradient, whose discrete
+curl vanishes, and trades local accuracy at the conductor for that compatibility.
 
 Per correction the effective voltages follow from the capacitance relation
 
@@ -89,6 +93,17 @@ class MultiElectrodeBiasCorrector:
         pairs the deposited charge density with the adjoint weighting potentials.
         ``"grounded"`` performs a real grounded Poisson solve per call, which is
         exact but costs one MLMG solve.
+    actuator_gradient : {"eb_aware", "ordinary"}, optional
+        Which discrete gradient of the setup potentials becomes the unit actuator
+        field. ``"eb_aware"`` (default) uses the shortened fluid length on cut
+        edges, which is the locally more accurate field but is not annihilated by
+        the Yee Faraday stencil: adding it drives a spurious boundary ``B``.
+        ``"ordinary"`` uses WarpX's full-grid gradient, whose discrete curl
+        vanishes, at the cost of a less accurate field next to the conductor. The
+        choice applies only to the actuator setup solves. The charge observer, its
+        capacitance measurement, the adjoint and the grounded cross-check are
+        unchanged; the capacitance is always measured from the unit fields that
+        are actually applied, so the feedback stays self-consistent either way.
     adjoint_tolerance : float, optional
         Relative residual tolerance for the adjoint weighting solves.
     adjoint_max_iterations : int, optional
@@ -104,6 +119,7 @@ class MultiElectrodeBiasCorrector:
         electrodes,
         relaxation=1.0,
         qg_mode="reciprocity",
+        actuator_gradient="eb_aware",
         adjoint_tolerance=1.0e-10,
         adjoint_max_iterations=200,
         verbose=False,
@@ -116,12 +132,18 @@ class MultiElectrodeBiasCorrector:
             raise ValueError(
                 f"qg_mode must be 'grounded' or 'reciprocity', got {qg_mode!r}"
             )
+        if actuator_gradient not in ("eb_aware", "ordinary"):
+            raise ValueError(
+                "actuator_gradient must be 'eb_aware' or 'ordinary', "
+                f"got {actuator_gradient!r}"
+            )
 
         self.sim = sim
         self.correction_interval = correction_interval
         self.electrodes = electrodes
         self.relaxation = relaxation
         self.qg_mode = qg_mode
+        self.actuator_gradient = actuator_gradient
         self.adjoint_tolerance = float(adjoint_tolerance)
         self.adjoint_max_iterations = int(adjoint_max_iterations)
         self.verbose = verbose
@@ -177,14 +199,18 @@ class MultiElectrodeBiasCorrector:
         # One grounded solve shared by all electrodes: E_grounded carries the
         # plasma field with every electrode at 0 V, so differencing it out of
         # each "electrode k at 1 V" solve leaves the charge-free unit field.
+        # Both the baseline and the biased solves must use the same extraction, or
+        # their difference would mix the two representations.
+        eb_aware = self.actuator_gradient == "eb_aware"
+
         saved = self._save_efield(lev)
         warpx.set_potential_on_eb("0.0")
-        warpx.solve_poisson_efield()
+        warpx.solve_poisson_efield(eb_aware_gradient=eb_aware)
         grounded = self._save_efield(lev)
 
         for k in range(self.n):
             warpx.set_potential_on_eb(f"1.0*({self.regions[k]})")
-            warpx.solve_poisson_efield()
+            warpx.solve_poisson_efield(eb_aware_gradient=eb_aware)
             for comp in (0, 1, 2):
                 direction = self._Direction(comp)
                 unit = self._mfr().get(self._unit_names[k], dir=direction, level=lev)
@@ -385,6 +411,9 @@ class MultiElectrodeBiasCorrector:
                 else list(self._adjoint_residuals)
             ),
             "qg_mode": self.qg_mode,
+            # the capacitance above is only comparable across runs that used the
+            # same actuator representation, so record which one produced it
+            "actuator_gradient": self.actuator_gradient,
             "current_step": int(self._warpx().getistep(lev=0)),
         }
 

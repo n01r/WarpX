@@ -76,7 +76,7 @@ std::unique_ptr<amrex::MultiFab> WarpX::DepositScratchRho (int const lev)
     return rho;
 }
 
-void WarpX::SolvePoissonEfield ()
+void WarpX::SolvePoissonEfield (bool const eb_aware_gradient)
 {
     ABLASTR_PROFILE("WarpX::SolvePoissonEfield");
 
@@ -117,7 +117,7 @@ void WarpX::SolvePoissonEfield ()
     }
 
     std::array<amrex::Real, 3> const beta = {0._rt, 0._rt, 0._rt};
-    if (EB::enabled()) {
+    if (EB::enabled() && eb_aware_gradient) {
         // with an EB, computePhi also fills the electric field
         es.computePhi(
             rho_lev, phi_lev, beta,
@@ -125,6 +125,11 @@ void WarpX::SolvePoissonEfield ()
             es.self_fields_max_iters, es.self_fields_verbosity,
             es.is_igf_2d_slices, efield);
     } else {
+        // No EB, or an EB with the ordinary full-grid gradient requested. The same
+        // solve runs either way: computePhi only extracts the cut-edge field when it
+        // is handed an efield, and setEBDirichlet still fills the covered nodes of
+        // phi, so computeE differences the conductor potential at a covered endpoint.
+        // This is the route RelativisticExplicitES::AddBoundaryField already takes.
         es.computePhi(
             rho_lev, phi_lev, beta,
             es.self_fields_required_precision, es.self_fields_absolute_tolerance,

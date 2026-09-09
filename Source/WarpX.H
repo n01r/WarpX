@@ -825,8 +825,18 @@ public:
     /** Electrostatic solve call */
     void ComputeSpaceChargeField (bool reset_E_field, bool reset_B_field);
 
-    /** Deposit charge and replace Efield_fp with the current Poisson solution. */
-    void SolvePoissonEfield ();
+    /** \brief Deposit charge and replace Efield_fp with the current Poisson solution.
+     *
+     * \param[in] eb_aware_gradient with an embedded boundary, extract E from the solve
+     *            itself, which uses the shortened fluid length on cut edges. This is
+     *            the default and the locally more accurate field at the boundary. Pass
+     *            false to extract E with the ordinary full-grid gradient
+     *            (ElectrostaticSolver::computeE) instead. That is the representation
+     *            the Yee Faraday update differences, so its discrete curl vanishes.
+     *            Without an embedded boundary both routes are the ordinary gradient
+     *            and this flag has no effect.
+     */
+    void SolvePoissonEfield (bool eb_aware_gradient = true);
 
     /** \brief Deposit all species onto a fresh nodal charge density.
      *

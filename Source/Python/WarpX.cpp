@@ -255,10 +255,20 @@ void init_WarpX (py::module& m)
             "Sets the EB potential string and updates the function parser."
         )
         .def("solve_poisson_efield",
-            [] (WarpX& wx) { wx.SolvePoissonEfield(); },
+            [] (WarpX& wx, bool const eb_aware_gradient) {
+                wx.SolvePoissonEfield(eb_aware_gradient);
+            },
+            py::arg("eb_aware_gradient") = true,
             "Deposit charge from all species, solve Poisson with the current EB and "
             "domain boundary conditions, replace Efield_fp with the result, and "
-            "publish phi_fp when it is registered."
+            "publish phi_fp when it is registered.\n\n"
+            "With an embedded boundary, eb_aware_gradient=True (the default) takes E "
+            "from the solve itself, which uses the shortened fluid length on cut "
+            "edges. Pass False to extract E with the ordinary full-grid gradient "
+            "instead: that is the representation the Yee Faraday update differences, "
+            "so the resulting field has no discrete curl, at the cost of a less "
+            "accurate local field next to the boundary. Without an embedded boundary "
+            "the flag has no effect."
         )
         .def("compute_eb_charge",
             [] (WarpX& wx, const std::string& weighting, const std::string& field) {
