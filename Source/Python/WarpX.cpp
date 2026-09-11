@@ -286,6 +286,37 @@ void init_WarpX (py::module& m)
             "the named field, with an optional weighting w(x,y,z) selecting one "
             "electrode. 3D and RZ with EB only."
         )
+        .def("compute_div_e",
+            [] (WarpX& wx, int const lev) {
+                // WarpX computes divE on the nodes, matching nodal rho and the
+                // operator the nodal Poisson solver inverts. ComputeDivE
+                // dispatches per geometry, so the cylindrical
+                // (1/r) d(r E_r)/dr form is used in RZ without a second kernel
+                // here. Additive binding to an existing native operator: no new
+                // discretisation is introduced.
+                amrex::BoxArray nodal_ba = wx.boxArray(lev);
+                nodal_ba.surroundingNodes();
+                amrex::MultiFab div_e(
+                    nodal_ba, wx.DistributionMap(lev), WarpX::ncomps, 0);
+                wx.ComputeDivE(div_e, lev);
+                return div_e;
+            },
+            py::arg("lev") = 0,
+            py::return_value_policy::move,
+            "Native discrete divergence of Efield_fp on the nodes, as a new "
+            "MultiFab. Uses WarpX::ComputeDivE, so the cylindrical form is "
+            "applied in RZ. The caller supplies the control-volume measure; in "
+            "RZ that is the cylindrical nodal volume, not dr*dz."
+        )
+#if defined(WARPX_DIM_RZ)
+        .def("rz_axis_volume_factor",
+            [] (WarpX const & wx) { return wx.RZAxisVolumeFactor(); },
+            "The axis-node radial volume factor charge deposition uses: 1/3 with "
+            "the Verboncoeur correction, 1/4 without. Exposed so a diagnostic "
+            "integrating rho or divE over nodal control volumes can use the same "
+            "axis measure as the deposition instead of guessing it."
+        )
+#endif
         .def("grounded_charge_from_adjoint",
             [] (WarpX& /*wx*/, const std::vector<std::string>& psi_fields, int lev) {
                 auto const q = WarpXGroundedChargeFromAdjoint(psi_fields, lev);
