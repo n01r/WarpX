@@ -801,7 +801,21 @@ public:
                              ablastr::fields::VectorField const & B,
                              const std::array<amrex::Real,3>& dx, amrex::IntVect ngrow);
 
-    void ComputeDivE(amrex::MultiFab& divE, int lev);
+    /** Nodal divergence of an E field.
+     *
+     * \param[out] divE  nodal divergence
+     * \param[in] lev    refinement level
+     * \param[in] field  which E field to differentiate. The default,
+     *                   ``Efield_aux``, preserves the historical behaviour;
+     *                   ``Efield_fp`` is the right choice for a charge
+     *                   measurement, since ``aux`` is only an alias of ``fp``
+     *                   at level 0 without time averaging, read-from-file
+     *                   external fields, or a collocated grid. Compare
+     *                   ``ChargeOnEB``, which was moved from ``aux`` to ``fp``
+     *                   for the same reason.
+     */
+    void ComputeDivE(amrex::MultiFab& divE, int lev,
+                     warpx::fields::FieldType field = warpx::fields::FieldType::Efield_aux);
 
     void ProjectionCleanDivB ();
     void CalculateExternalCurlA ();

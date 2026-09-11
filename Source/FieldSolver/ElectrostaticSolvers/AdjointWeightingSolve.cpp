@@ -912,3 +912,105 @@ WarpXGroundedChargeFromAdjoint (std::vector<std::string> const& psi_fields, int 
     }
     return q_grounded;
 }
+
+namespace
+{
+    /** Fill a nodal MultiFab with w(x,y,z) from a parser expression. */
+    void FillNodalWeight (amrex::MultiFab& weight, std::string const& expr, int lev)
+    {
+        using namespace amrex;
+
+        auto& warpx = WarpX::GetInstance();
+        amrex::Parser parser = utils::parser::makeParser(expr, {"x", "y", "z"});
+        auto const fun = parser.compile<3>();
+        const auto dx = warpx.Geom(lev).CellSizeArray();
+        const auto lo = warpx.Geom(lev).ProbLoArray();
+
+        for (MFIter mfi(weight); mfi.isValid(); ++mfi) {
+            auto const& wa = weight.array(mfi);
+            amrex::ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+#if defined(WARPX_DIM_3D)
+                    const Real x = lo[0] + Real(i)*dx[0];
+                    const Real y = lo[1] + Real(j)*dx[1];
+                    const Real z = lo[2] + Real(k)*dx[2];
+#elif defined(WARPX_DIM_RZ) || defined(WARPX_DIM_XZ)
+                    // RZ and 2-D: the parser's first argument is r (or x) and
+                    // its third is z, matching WeightedChargeOnEB's convention.
+                    const Real x = lo[0] + Real(i)*dx[0];
+                    const Real y = 0._rt;
+                    const Real z = lo[1] + Real(j)*dx[1];
+                    amrex::ignore_unused(k);
+#else
+                    const Real x = lo[0] + Real(i)*dx[0];
+                    const Real y = 0._rt;
+                    const Real z = 0._rt;
+                    amrex::ignore_unused(j, k);
+#endif
+                    wa(i,j,k) = fun(x, y, z);
+                });
+        }
+    }
+
+    /** Nodal divergence of Efield_fp, on the level's nodal BoxArray. */
+    std::unique_ptr<amrex::MultiFab> NodalDivEFromFp (int lev)
+    {
+        auto& warpx = WarpX::GetInstance();
+        amrex::BoxArray nodal_ba = warpx.boxArray(lev);
+        nodal_ba.surroundingNodes();
+        auto div_e = std::make_unique<amrex::MultiFab>(
+            nodal_ba, warpx.DistributionMap(lev), 1, 0);
+
+        // The divergence stencil at a node on a box boundary reaches into the
+        // guard cells, and after a field push or a Poisson solve WarpX leaves
+        // those outdated. Refresh them, or the integral stops being independent
+        // of the domain decomposition: measured on a 96^3 sphere fixture, a
+        // region whose boundary crossed a box edge came out 2.8% low with 27
+        // boxes and every region was wrong with 216, while the single-box
+        // answer was exact. Only ghost cells are written; the valid region is
+        // untouched, so this is a refresh and not a change of state.
+        ablastr::fields::VectorField const E =
+            warpx.m_fields.get_alldirs(warpx::fields::FieldType::Efield_fp, lev);
+        for (int idim = 0; idim < 3; ++idim) {
+            E[idim]->FillBoundary(warpx.Geom(lev).periodicity());
+        }
+
+        // Efield_fp, not Efield_aux: aux is only an alias of fp at level 0
+        // without time averaging, read-from-file external fields, or a
+        // collocated grid.
+        warpx.ComputeDivE(*div_e, lev, warpx::fields::FieldType::Efield_fp);
+        return div_e;
+    }
+}
+
+amrex::Vector<amrex::Real>
+WarpXDivEChargeInRegions (std::vector<std::string> const& regions, int lev)
+{
+    auto const div_e = NodalDivEFromFp(lev);
+    amrex::MultiFab weight(div_e->boxArray(), div_e->DistributionMap(), 1, 0);
+
+    amrex::Vector<amrex::Real> q;
+    q.reserve(regions.size());
+    for (auto const& expr : regions) {
+        FillNodalWeight(weight, expr, lev);
+        q.push_back(PhysConst::epsilon_0 * IntegrateRhoPsi(*div_e, weight, lev));
+    }
+    return q;
+}
+
+amrex::Vector<amrex::Real>
+WarpXLiveChargeInRegions (std::vector<std::string> const& regions, int lev)
+{
+    auto& warpx = WarpX::GetInstance();
+    auto const rho = warpx.DepositScratchRho(lev);
+    amrex::MultiFab weight(rho->boxArray(), rho->DistributionMap(), 1, 0);
+
+    amrex::Vector<amrex::Real> q;
+    q.reserve(regions.size());
+    for (auto const& expr : regions) {
+        FillNodalWeight(weight, expr, lev);
+        q.push_back(IntegrateRhoPsi(*rho, weight, lev));
+    }
+    return q;
+}

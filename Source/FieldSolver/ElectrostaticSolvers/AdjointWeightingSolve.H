@@ -74,4 +74,47 @@ void WarpXFinalizeChargeFunctionalPsi (amrex::MultiFab& psi, int lev);
 amrex::Vector<amrex::Real>
 WarpXGroundedChargeFromAdjoint (std::vector<std::string> const& psi_fields, int lev);
 
+/** \brief Charge enclosed by a region, from the divergence of the solved field.
+ *
+ * Evaluates, for each region weight \f$w_k(x,y,z)\f$,
+ * \f[
+ *     Q_{div,k} = \epsilon_0 \sum_a w_k[a]\, (\nabla\cdot E)[a]\, dV_a
+ * \f]
+ * on the nodes, using WarpX's own ``ComputeDivE`` on ``Efield_fp`` and the same
+ * nodal control volumes as the charge integration elsewhere in this file.
+ *
+ * This is the volume counterpart of ``WeightedChargeOnEB``. It is the preferred
+ * observer for an electrode's charge, because a region bounded in live fluid
+ * does not read the cut cells whose ``E`` the staircase FDTD update freezes:
+ * the surface integral samples exactly those cells, and reads a fraction of the
+ * charge that does not converge under refinement. Measured requirement: about
+ * two cells of vacuum clearance between the metal and the region boundary, a
+ * figure that is constant in cells and so shrinks as the grid is refined.
+ *
+ * Shared nodes on box boundaries are counted exactly once, so the result is
+ * independent of the domain decomposition and of the number of ranks.
+ *
+ * \f$Q_{div}\f$ is the **total** enclosed charge. Subtract
+ * ``WarpXLiveChargeInRegions`` over the same weights to isolate the charge on
+ * the electrode itself.
+ *
+ * @param[in] regions parser expressions \f$w_k(x,y,z)\f$, one per electrode
+ * @param[in] lev refinement level
+ */
+amrex::Vector<amrex::Real>
+WarpXDivEChargeInRegions (std::vector<std::string> const& regions, int lev);
+
+/** \brief Deposited live charge inside each region.
+ *
+ * Evaluates \f$\sum_a w_k[a]\, \rho_a\, dV_a\f$ against a freshly deposited
+ * scratch charge density, on the same nodes and with the same measure as
+ * ``WarpXDivEChargeInRegions``, so that the difference of the two isolates the
+ * charge residing on the conductor.
+ *
+ * @param[in] regions parser expressions \f$w_k(x,y,z)\f$, one per electrode
+ * @param[in] lev refinement level
+ */
+amrex::Vector<amrex::Real>
+WarpXLiveChargeInRegions (std::vector<std::string> const& regions, int lev);
+
 #endif // WARPX_ADJOINT_WEIGHTING_SOLVE_H_

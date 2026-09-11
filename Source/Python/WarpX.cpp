@@ -286,6 +286,24 @@ void init_WarpX (py::module& m)
             "the named field, with an optional weighting w(x,y,z) selecting one "
             "electrode. 3D and RZ with EB only."
         )
+        .def("deposit_scratch_rho",
+            [] (WarpX& wx, int const lev) {
+                // Fresh nodal charge density from all live species, filtered and
+                // guard-cell summed exactly as the electrostatic solvers consume
+                // it, on a scratch allocation that leaves the registered rho_fp
+                // untouched. A volume charge observer needs this to subtract the
+                // plasma charge inside its region with the SAME measure the
+                // field was built from; reading rho_fp is not an option because
+                // it is not allocated in a plain electromagnetic run.
+                auto rho = wx.DepositScratchRho(lev);
+                return amrex::MultiFab(std::move(*rho));
+            },
+            py::arg("lev") = 0,
+            py::return_value_policy::move,
+            "Freshly deposited nodal charge density of all live species, as a new "
+            "MultiFab. Does not touch rho_fp, does not solve and does not move "
+            "particles."
+        )
         .def("compute_div_e",
             [] (WarpX& wx, int const lev) {
                 // WarpX computes divE on the nodes, matching nodal rho and the
@@ -327,6 +345,44 @@ void init_WarpX (py::module& m)
             "evaluated as -sum rho*Psi*dV against a freshly deposited charge density. "
             "No Poisson solve. Shared nodes on box boundaries are counted once and the "
             "RZ measure is WarpX's cylindrical nodal volume."
+        )
+        .def("div_e_charge_in_regions",
+            [] (WarpX& /*wx*/, const std::vector<std::string>& regions, int lev) {
+                auto const q = WarpXDivEChargeInRegions(regions, lev);
+                return std::vector<amrex::Real>(q.begin(), q.end());
+            },
+            py::arg("regions"), py::arg("lev") = 0,
+            "Charge enclosed by each region, eps0 * sum w(x,y,z) divE dV on the nodes, "
+            "using WarpX's own ComputeDivE on Efield_fp. The volume counterpart of "
+            "compute_eb_charge, and the preferred electrode-charge observer: a region "
+            "bounded in live fluid does not read the cut cells whose E the staircase "
+            "FDTD update freezes. Needs about two cells of vacuum clearance between the "
+            "metal and the region boundary. Shared nodes on box boundaries are counted "
+            "once, so the result is independent of the domain decomposition and the "
+            "number of ranks. This is the TOTAL enclosed charge; subtract "
+            "live_charge_in_regions over the same weights to isolate the electrode's."
+        )
+        .def("live_charge_in_regions",
+            [] (WarpX& /*wx*/, const std::vector<std::string>& regions, int lev) {
+                auto const q = WarpXLiveChargeInRegions(regions, lev);
+                return std::vector<amrex::Real>(q.begin(), q.end());
+            },
+            py::arg("regions"), py::arg("lev") = 0,
+            "Deposited live charge inside each region, sum w(x,y,z) rho dV, against a "
+            "freshly deposited scratch density on the same nodes and measure as "
+            "div_e_charge_in_regions."
+        )
+        .def("eb_update_e_flag",
+            [] (WarpX& wx, int const lev, int const dir) {
+                return wx.GetEBUpdateEFlag()[lev][dir].get();
+            },
+            py::arg("lev") = 0, py::arg("dir") = 0,
+            py::return_value_policy::reference_internal,
+            "The staircase update mask for one E component: 1 where the FDTD update "
+            "advances the field, 0 where it is frozen because a cell in the component's "
+            "stencil is cut or covered. Read-only view of WarpX's own mask, so a "
+            "corrector can keep its correction out of the frozen cells without "
+            "reconstructing the topology."
         )
         .def("solve_adjoint_weighting",
             [] (WarpX& wx, const std::string& region, const std::string& out_name,
