@@ -74,6 +74,19 @@ def _get_libwarpx():
 class MultiElectrodeBiasCorrector:
     """Maintain several driven EB electrode potentials in EM mode.
 
+    .. important::
+       **No conductor surface may coincide with a domain boundary at any
+       point.** Every embedded conductor must be strictly interior, with a
+       layer of vacuum between it and the domain boundary. A conductor touching
+       the boundary is electrically the same conductor as that boundary: the
+       capacitance matrix then loses its reference, becomes non-symmetric and
+       ill-conditioned (measured condition number 1.6e12 against 8.1 when
+       separated), and no closed surface around the electrode can be drawn in
+       vacuum. The vacuum layer is required by the electrostatics, not by the
+       particles; none need ever enter it. Transverse domain boundaries should
+       be Dirichlet, since only a boundary that can sink charge supplies the
+       reference the matrix needs.
+
     Parameters
     ----------
     sim : picmi.Simulation

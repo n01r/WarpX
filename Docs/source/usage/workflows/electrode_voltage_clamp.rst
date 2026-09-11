@@ -11,6 +11,39 @@ effective electrode voltage therefore drifts as the plasma charges the surface.
 quasi-static correction for several driven electrodes without a Poisson solve per
 step.
 
+Geometry requirement
+--------------------
+
+.. important::
+
+   **No conductor surface may coincide with a domain boundary at any point.**
+   Every embedded conductor must be strictly interior, with at least a layer of
+   vacuum between it and the domain boundary.
+
+A conductor whose surface touches the domain boundary is electrically the same
+conductor as that boundary. Two consequences follow, and both are fatal rather
+than inaccurate:
+
+* The capacitance matrix loses its reference. Measured on a coaxial pair whose
+  outer conductor radius equalled the domain half-width, its row sums vanished
+  to roundoff and its condition number was :math:`1.6\times10^{12}`; it was
+  also not symmetric, which reciprocity forbids for a true capacitance matrix.
+  Solving for the electrode potentials then diverges. Separating the conductor
+  from the wall by a vacuum layer gave a condition number of :math:`8.1` and a
+  symmetric matrix.
+* No closed surface can be drawn around the electrode lying wholly in vacuum,
+  so any charge measured for it includes the boundary's charge as well.
+
+The vacuum layer is needed for the *electrostatics*, not for the particles: no
+particle need ever enter it. Its thickness only has to exceed the clearance the
+charge measurement needs, a few cells.
+
+The domain boundary in the directions transverse to the electrodes should be
+Dirichlet. A Dirichlet wall is a conductor that can sink charge, and that is
+what supplies the reference the capacitance matrix needs. Neumann or periodic
+walls pass no flux and hold no reference, and with those only potential
+*differences* are recoverable, never absolute electrode potentials.
+
 How it works
 ------------
 
