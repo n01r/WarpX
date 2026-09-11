@@ -124,6 +124,25 @@ if(WarpX_EB)
     )
 endif()
 
+# Two driven electrodes that are SEPARATE BODIES: a cathode rod on the axis and
+# an isolated ring, with the grounded vessel as the Dirichlet wall. Asserts the
+# properties that make such a geometry a well-posed two-degree-of-freedom
+# problem: a reciprocal capacitance matrix, non-zero column sums (so neither
+# electrode encloses the other and both actuators have work), and a closing
+# loop. Uses the volume charge observer; the EB surface integral gives a 36%
+# non-reciprocal matrix on this same geometry.
+if(WarpX_EB)
+    add_warpx_test(
+        test_rz_clamp_coax_ring_picmi  # name
+        RZ  # dims
+        2  # nprocs
+        "inputs_test_rz_clamp_coax_ring_picmi.py"  # inputs
+        OFF  # analysis (the input contains numerical assertions)
+        OFF  # checksum
+        OFF  # dependency
+    )
+endif()
+
 # Periodic outer boundaries. A periodic direction has no wall, so its domain-edge
 # nodes are unknowns rather than constrained rows; charge is placed so that its
 # deposition support crosses the seam.

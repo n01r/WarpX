@@ -52,6 +52,32 @@ Usage::
             {"name": "right", "region": "(x>0)", "potential": -700.0},
         ],
     )
+
+With ``observer="volume"`` the electrode charge is read as a divergence over a
+volume enclosing each electrode instead of a flux over its cut cells, which
+needs a second expression per electrode::
+
+    corrector = MultiElectrodeBiasCorrector(
+        sim=sim,
+        correction_interval=10,
+        observer="volume",
+        electrodes=[
+            {
+                "name": "cathode",
+                "region": "(x*x+y*y<1.4e-4)",          # surface: sets the potential
+                "volume": "(x*x+y*y<3.24e-4)*(z*z<2.7e-3)",   # encloses it
+                "potential": -1.0e5,
+            },
+            ...
+        ],
+    )
+
+Each ``volume`` must enclose its electrode with the region boundary in live
+vacuum -- about two cells of clearance from the metal, a figure that is constant
+in cells and so shrinks as the grid is refined -- and the volumes must not
+overlap or touch. Setup checks the measured capacitance matrix for reciprocity
+and refuses to run if it is violated, which is what a region boundary cutting
+through metal produces.
     # afterInitEsolve does not run on a restart, so register both init hooks
     installafterInitEsolve(corrector.setup_after_init)
     installafterInitatRestart(corrector.setup_after_init)
@@ -151,6 +177,8 @@ class MultiElectrodeBiasCorrector:
         # keyword-only and last, so existing positional calls keep their meaning
         *,
         actuator_gradient="eb_aware",
+        observer="surface",
+        reciprocity_tolerance=1.0e-2,
     ):
         if not (0.0 < relaxation <= 1.0):
             raise ValueError("relaxation must be in (0, 1].")
@@ -166,7 +194,14 @@ class MultiElectrodeBiasCorrector:
                 f"got {actuator_gradient!r}"
             )
 
+        if observer not in ("surface", "volume"):
+            raise ValueError(
+                f"observer must be 'surface' or 'volume', got {observer!r}"
+            )
+
         self.sim = sim
+        self.observer = observer
+        self.reciprocity_tolerance = float(reciprocity_tolerance)
         self.correction_interval = correction_interval
         self.electrodes = electrodes
         self.relaxation = relaxation
@@ -179,9 +214,29 @@ class MultiElectrodeBiasCorrector:
         self.n = len(electrodes)
         self.regions = [e["region"] for e in electrodes]
         self.v_target = [float(e["potential"]) for e in electrodes]
+        # The volume observer reads the charge enclosed by a region whose boundary
+        # lies in live vacuum, so it needs an enclosing volume per electrode in
+        # addition to the surface selector that sets the potential. About two
+        # cells of clearance between the metal and the region boundary is the
+        # measured requirement; that figure is constant in cells, so it shrinks
+        # physically as the grid is refined.
         self.names = [
             electrodes[k].get("name", f"electrode_{k}") for k in range(self.n)
         ]
+        if observer == "volume":
+            missing = [
+                self.names[k] for k in range(self.n) if "volume" not in electrodes[k]
+            ]
+            if missing:
+                raise ValueError(
+                    "observer='volume' needs a 'volume' expression for every "
+                    f"electrode; missing for {missing}. It is the enclosing region "
+                    "for the charge integral, not the surface selector that sets "
+                    "the potential."
+                )
+            self.volumes = [e["volume"] for e in electrodes]
+        else:
+            self.volumes = None
         # combined EB potential of the configured electrode pattern
         self.potential_expression = " + ".join(
             f"({v})*({r})" for v, r in zip(self.v_target, self.regions)
@@ -190,6 +245,7 @@ class MultiElectrodeBiasCorrector:
         self._ready = False
         self._capacitance = None
         self._capacitance_condition = None
+        self._capacitance_asymmetry = None
         self._adjoint_residuals = None
         self._last_correction_state = None
         self._unit_names = [f"Efield_unit_{k}" for k in range(self.n)]
@@ -204,6 +260,30 @@ class MultiElectrodeBiasCorrector:
 
     def _Direction(self, comp):
         return _get_libwarpx().libwarpx_so.Direction(comp)
+
+    # -- the observer --------------------------------------------------------
+    def _charge_from_live_field(self):
+        """Charge on each electrode, read from ``Efield_fp``.
+
+        ``surface`` integrates ``E.n`` over the embedded boundary's cut cells.
+        ``volume`` integrates the divergence over a region enclosing the
+        electrode and takes off the live charge inside it, so that the boundary
+        of the integration surface lies in ordinary fluid rather than on the cut
+        cells whose ``E`` the staircase FDTD update freezes.
+        """
+        import numpy as np  # noqa: PLC0415
+
+        warpx = self._warpx()
+        if self.observer == "surface":
+            return np.array(
+                [
+                    warpx.compute_eb_charge(weighting=r, field="Efield_fp")
+                    for r in self.regions
+                ]
+            )
+        q_div = np.asarray(warpx.div_e_charge_in_regions(self.volumes, 0))
+        q_live = np.asarray(warpx.live_charge_in_regions(self.volumes, 0))
+        return q_div - q_live
 
     # -- setup ---------------------------------------------------------------
     def setup_after_init(self):
@@ -231,11 +311,19 @@ class MultiElectrodeBiasCorrector:
         # their difference would mix the two representations.
         eb_aware = self.actuator_gradient == "eb_aware"
 
+        # The volume observer reads Efield_fp, so its columns have to be taken
+        # while each unit solution is still the live field. The surface observer
+        # can be applied to the stored unit fields afterwards.
+        volume_columns = []
+
         saved = self._save_efield(lev)
         try:
             warpx.set_potential_on_eb("0.0")
             warpx.solve_poisson_efield(eb_aware_gradient=eb_aware)
             grounded = self._save_efield(lev)
+            volume_base = (
+                self._charge_from_live_field() if self.observer == "volume" else None
+            )
 
             for k in range(self.n):
                 warpx.set_potential_on_eb(f"1.0*({self.regions[k]})")
@@ -253,19 +341,25 @@ class MultiElectrodeBiasCorrector:
                         0,
                     )
                     unit.saxpy(-1.0, grounded[comp], 0, 0, 1, 0)
+                if self.observer == "volume":
+                    volume_columns.append(self._charge_from_live_field() - volume_base)
         finally:
             # A failed solve must not leave the live field, or the EB parser,
             # holding a setup value. See the state contract in the class docstring.
             self._restore_efield(saved, lev)
             warpx.set_potential_on_eb(self.potential_expression)
 
-        # vacuum capacitance matrix C_jk = eps0 * oint_j E_0k . n dS
-        self._capacitance = np.empty((self.n, self.n))
-        for j in range(self.n):
-            for k in range(self.n):
-                self._capacitance[j, k] = warpx.compute_eb_charge(
-                    weighting=self.regions[j], field=self._unit_names[k]
-                )
+        # vacuum capacitance matrix: column k is the charge each electrode
+        # carries when electrode k alone is raised to 1 V
+        if self.observer == "volume":
+            self._capacitance = np.column_stack(volume_columns)
+        else:
+            self._capacitance = np.empty((self.n, self.n))
+            for j in range(self.n):
+                for k in range(self.n):
+                    self._capacitance[j, k] = warpx.compute_eb_charge(
+                        weighting=self.regions[j], field=self._unit_names[k]
+                    )
         cond = float(np.linalg.cond(self._capacitance))
         self._capacitance_condition = cond
         if not np.isfinite(cond) or cond > 1.0e12:
@@ -273,6 +367,31 @@ class MultiElectrodeBiasCorrector:
                 f"Capacitance matrix is singular/ill-conditioned (cond={cond:.3e}). "
                 "Check that the electrode regions are distinct and non-overlapping."
             )
+
+        # Reciprocity, C_jk = C_kj, is a theorem for any set of conductors, so a
+        # measured violation means the measurement is wrong -- most often because
+        # a region boundary passes through metal, or because two electrodes are
+        # too close to enclose separately. It is checked only for the volume
+        # observer: the surface integral violates it by tens of percent even on
+        # well separated bodies, so asserting it there would fail every run.
+        self._capacitance_asymmetry = None
+        if self.n > 1:
+            c = self._capacitance
+            off = np.abs(c - np.diag(np.diag(c)))
+            scale = off.max()
+            if scale > 0.0:
+                asym = float(np.max(np.abs(c - c.T)) / scale)
+                self._capacitance_asymmetry = asym
+                if self.observer == "volume" and asym > self.reciprocity_tolerance:
+                    raise RuntimeError(
+                        f"Capacitance matrix is not reciprocal (relative "
+                        f"asymmetry {asym:.3e} > {self.reciprocity_tolerance:.1e}). "
+                        "C_jk = C_kj is a theorem for a set of conductors, so this "
+                        "is a measurement failure: check that each electrode's "
+                        "'volume' encloses it with its boundary in vacuum, that the "
+                        "volumes do not overlap or touch, and that no electrode "
+                        "surface coincides with a domain boundary."
+                    )
 
         if self.qg_mode == "reciprocity":
             self._build_adjoint_weighting()
@@ -286,12 +405,17 @@ class MultiElectrodeBiasCorrector:
         """Solve for the discrete Shockley-Ramo weighting potential per electrode."""
         warpx = self._warpx()
         self._adjoint_residuals = []
-        for k, region in enumerate(self.regions):
+        # Psi must be the adjoint of the SAME functional the observer uses; the
+        # two rows differ, and pairing one with the other leaves a residual of a
+        # few percent of the bias.
+        psi_regions = self.volumes if self.observer == "volume" else self.regions
+        for k, region in enumerate(psi_regions):
             ok, residual = warpx.solve_adjoint_weighting(
                 region=region,
                 out_name=self._psi_names[k],
                 tol=self.adjoint_tolerance,
                 max_iter=self.adjoint_max_iterations,
+                functional=self.observer,
             )
             if not ok:
                 raise RuntimeError(
@@ -363,15 +487,9 @@ class MultiElectrodeBiasCorrector:
         """
         import numpy as np  # noqa: PLC0415
 
-        warpx = self._warpx()
         lev = 0
 
-        field_charge = np.array(
-            [
-                warpx.compute_eb_charge(weighting=r, field="Efield_fp")
-                for r in self.regions
-            ]
-        )
+        field_charge = self._charge_from_live_field()
         if self.qg_mode == "grounded":
             grounded_charge = self._grounded_charge_via_solve(lev)
         else:
@@ -386,19 +504,12 @@ class MultiElectrodeBiasCorrector:
 
     def _grounded_charge_via_solve(self, lev):
         """Grounded plasma charge from a real save/solve/restore Poisson solve."""
-        import numpy as np  # noqa: PLC0415
-
         warpx = self._warpx()
         saved = self._save_efield(lev)
         try:
             warpx.set_potential_on_eb("0.0")
             warpx.solve_poisson_efield()
-            q_g = np.array(
-                [
-                    warpx.compute_eb_charge(weighting=r, field="Efield_fp")
-                    for r in self.regions
-                ]
-            )
+            q_g = self._charge_from_live_field()
         finally:
             self._restore_efield(saved, lev)
             warpx.set_potential_on_eb(self.potential_expression)
@@ -408,11 +519,16 @@ class MultiElectrodeBiasCorrector:
         """Grounded plasma charge from the adjoint pairing, without a solve."""
         import numpy as np  # noqa: PLC0415
 
-        return np.asarray(
-            self._warpx().grounded_charge_from_adjoint(
-                psi_fields=self._psi_names, lev=lev
-            )
+        warpx = self._warpx()
+        q_g = np.asarray(
+            warpx.grounded_charge_from_adjoint(psi_fields=self._psi_names, lev=lev)
         )
+        if self.observer == "volume":
+            # The volume Psi is the adjoint of the TOTAL enclosed charge, while
+            # the observable is Q_div - Q_live, so the live charge comes off the
+            # reference as well. Leaving this out costs a few percent of the bias.
+            q_g = q_g - np.asarray(warpx.live_charge_in_regions(self.volumes, lev))
+        return q_g
 
     def compare_grounded_charge(self, reciprocity_charge=None):
         """Compare the adjoint observer with a real grounded Poisson solve.
@@ -455,6 +571,8 @@ class MultiElectrodeBiasCorrector:
                 else list(self._adjoint_residuals)
             ),
             "qg_mode": self.qg_mode,
+            "observer": self.observer,
+            "capacitance_asymmetry": self._capacitance_asymmetry,
             # the capacitance above is only comparable across runs that used the
             # same actuator representation, so record which one produced it
             "actuator_gradient": self.actuator_gradient,
