@@ -386,8 +386,11 @@ void init_WarpX (py::module& m)
         )
         .def("solve_adjoint_weighting",
             [] (WarpX& wx, const std::string& region, const std::string& out_name,
-                amrex::Real tol, int max_iter) {
+                amrex::Real tol, int max_iter, const std::string& functional) {
                 int const lev = 0;
+                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+                    functional == "surface" || functional == "volume",
+                    "solve_adjoint_weighting: functional must be 'surface' or 'volume'");
                 auto const& levset = wx.fieldEBFactory(lev).getLevelSet();
 
                 amrex::MultiFab* psi = wx.m_fields.get(out_name, lev);
@@ -440,7 +443,11 @@ void init_WarpX (py::module& m)
                 }
 
                 amrex::MultiFab rhs(ba, dm, 1, 1);
-                WarpXBuildAdjointRHSChargeFunctional(rhs, region, dmsk, lev);
+                if (functional == "volume") {
+                    WarpXBuildAdjointRHSVolumeFunctional(rhs, region, dmsk, lev);
+                } else {
+                    WarpXBuildAdjointRHSChargeFunctional(rhs, region, dmsk, lev);
+                }
 
                 amrex::Real res = -1.0;
                 int iters = -1;
@@ -457,11 +464,18 @@ void init_WarpX (py::module& m)
             },
             py::arg("region"), py::arg("out_name"),
             py::arg("tol") = 1.0e-10, py::arg("max_iter") = 200,
+            py::arg("functional") = "surface",
             "Solve for the adjoint weighting potential Psi_k of the electrode selected "
             "by region(x,y,z) and write it into the registered nodal field out_name. "
             "Unlike the plain unit-voltage basis, this Psi makes the grounded-charge "
             "identity Q_k = -sum_a rho_a Psi_k[a] exact on WarpX's non-symmetric EB "
             "Laplacian. Requires grounded (PEC) outer boundaries. "
+            "functional selects WHICH charge the identity is exact for: 'surface' for "
+            "compute_eb_charge, in which case region selects the EB surface patch, and "
+            "'volume' for div_e_charge_in_regions, in which case region is the "
+            "enclosing volume. Psi is the adjoint of one specific measurement, so "
+            "pairing it with the other observer leaves a residual of a few percent of "
+            "the bias. "
             "Returns (converged, relative_residual); the caller must check converged, "
             "because an unconverged Psi yields a plausible but wrong correction. "
             "3D and RZ with EB only."

@@ -74,6 +74,29 @@ void WarpXFinalizeChargeFunctionalPsi (amrex::MultiFab& psi, int lev);
 amrex::Vector<amrex::Real>
 WarpXGroundedChargeFromAdjoint (std::vector<std::string> const& psi_fields, int lev);
 
+/** \brief Adjoint right-hand side for the VOLUME charge functional.
+ *
+ * The counterpart of ``WarpXBuildAdjointRHSChargeFunctional`` for the charge
+ * measured as \f$\epsilon_0 \sum_n w_k[n] (\nabla\cdot E)[n] V_n\f$ over a
+ * region, i.e. for ``WarpXDivEChargeInRegions`` rather than
+ * ``WeightedChargeOnEB``. Only the row differs: the machinery downstream,
+ * \f$\Psi_k = A^{-T} c_k\f$, is the same.
+ *
+ * Use this one when the corrector's observer is the volume integral. Pairing an
+ * observer with the other functional's \f$\Psi\f$ leaves a residual of a few
+ * percent of the bias, because \f$\Psi\f$ is then the adjoint of a different
+ * measurement.
+ *
+ * @param[out] rhs nodal right-hand side
+ * @param[in] region parser expression \f$w_k(x,y,z)\f$ selecting the enclosing volume
+ * @param[in] dmsk constrained rows: EB-covered nodes and grounded wall nodes
+ * @param[in] lev refinement level
+ */
+void WarpXBuildAdjointRHSVolumeFunctional (amrex::MultiFab& rhs,
+                                           std::string const& region,
+                                           amrex::iMultiFab const& dmsk,
+                                           int lev);
+
 /** \brief Charge enclosed by a region, from the divergence of the solved field.
  *
  * Evaluates, for each region weight \f$w_k(x,y,z)\f$,

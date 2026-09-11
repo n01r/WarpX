@@ -550,6 +550,13 @@ void ScatterEdgeCoefficient (amrex::Real f, amrex::Real dxi, amrex::Real ec,
 
 } // namespace
 
+namespace {
+    void ScatterEdgeCoefficientsToNodes (amrex::Vector<amrex::MultiFab>& f,
+                                         amrex::MultiFab& rhs,
+                                         amrex::iMultiFab const& dmsk,
+                                         int lev);
+} // namespace
+
 void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
                                            std::string const& region,
                                            amrex::iMultiFab const& dmsk,
@@ -560,8 +567,6 @@ void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
 
     auto& warpx = WarpX::GetInstance();
     auto const& eb_fact = warpx.fieldEBFactory(lev);
-    auto const& levset = eb_fact.getLevelSet();
-    auto const& edge_cent = eb_fact.getEdgeCent();
     auto const& eb_flag = eb_fact.getMultiEBCellFlagFab();
     auto const& eb_bnd_cent = eb_fact.getBndryCent();
     auto const& eb_bnd_normal = eb_fact.getBndryNormal();
@@ -569,7 +574,6 @@ void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
 
     const auto dx = warpx.Geom(lev).CellSizeArray();
     const amrex::RealBox& real_box = warpx.Geom(lev).ProbDomain();
-    const amrex::Periodicity& period = warpx.Geom(lev).periodicity();
 
     amrex::Parser rparser = utils::parser::makeParser(region, {"x","y","z"});
     auto fun_w = utils::parser::compileParser<3>(&rparser);
@@ -584,10 +588,6 @@ void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
         f[idim].define(E.boxArray(), E.DistributionMap(), 1, 1);
         f[idim].setVal(0.0);
     }
-
-    // count of cut edges whose transpose denominator was too close to zero
-    amrex::Gpu::Buffer<amrex::Long> skip_buf({amrex::Long(0)});
-    amrex::Long* skip_ptr = skip_buf.data();
 
     // ---- pass A: cut-cell surface loop -> edge coefficients ---------------
     for (amrex::MFIter mfi(f[0]); mfi.isValid(); ++mfi)
@@ -650,9 +650,34 @@ void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
 #endif
             });
     }
+    ScatterEdgeCoefficientsToNodes(f, rhs, dmsk, lev);
+}
+
+namespace {
+
+/* Pass B, shared by every charge functional: edge coefficients -> nodal rhs,
+ * through the exact transpose of AMReX's mlebndfdlap_grad_*_doit with
+ * E = -grad(phi) and a grounded embedded boundary.
+ *
+ * This half does not depend on WHICH charge is being measured -- only pass A
+ * does -- so the surface and volume functionals share it verbatim.
+ */
+void ScatterEdgeCoefficientsToNodes (amrex::Vector<amrex::MultiFab>& f,
+                                     amrex::MultiFab& rhs,
+                                     amrex::iMultiFab const& dmsk,
+                                     int lev)
+{
+    auto& warpx = WarpX::GetInstance();
+    const auto dx = warpx.Geom(lev).CellSizeArray();
+    const amrex::Periodicity& period = warpx.Geom(lev).periodicity();
+    auto const& levset = warpx.fieldEBFactory(lev).getLevelSet();
+    auto const& edge_cent = warpx.fieldEBFactory(lev).getEdgeCent();
+
+    amrex::Gpu::Buffer<amrex::Long> skip_buf({amrex::Long(0)});
+    amrex::Long* skip_ptr = skip_buf.data();
+
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) { f[idim].SumBoundary(period); }
 
-    // ---- pass B: edge coefficients -> nodal rhs ---------------------------
     // "covered" is the EB level set, exactly as mlebndfdlap_grad_*_doit tests it,
     // NOT dmsk, which also marks the outer walls. An edge straddling a grounded
     // wall deposits normally and the wall node is discarded below.
@@ -707,9 +732,181 @@ void WarpXBuildAdjointRHSChargeFunctional (amrex::MultiFab& rhs,
     amrex::Long skipped = *(skip_buf.hostData());
     amrex::ParallelDescriptor::ReduceLongSum(skipped);
     if (skipped > 0) {
-        amrex::Print() << "WarpXBuildAdjointRHSChargeFunctional: skipped " << skipped
+        amrex::Print() << "ScatterEdgeCoefficientsToNodes: skipped " << skipped
                        << " cut edge(s) with a near-singular transpose denominator.\n";
     }
+}
+
+} // namespace
+
+/* Pass A for the VOLUME charge functional.
+ *
+ * The measured charge is
+ *
+ *     Q_k = eps0 * sum_n w_k[n] (div E)[n] V_n
+ *
+ * over the nodes, with V_n the nodal control volume. Since (div E)[n] is a
+ * linear combination of edge values, Q_k = sum_e f_e E_e with
+ *
+ *     f = D^T g,     g[n] = eps0 * V_n * w_k[n]
+ *
+ * and D the nodal divergence. D^T is the discrete gradient up to sign, so for a
+ * sharp region indicator f is a delta shell on the region boundary -- the
+ * discrete Gauss theorem again. Unlike the surface row, whose support is on cut
+ * cells where the transpose denominators can approach zero, this row is
+ * supported wherever w_k varies, which for a legal region is live fluid.
+ *
+ * The stencils transposed here are exactly WarpX's own, from
+ * FiniteDifferenceSolver::ComputeDivE:
+ *
+ *   Cartesian   div[i,j,k] = (Ex[i,j,k] - Ex[i-1,j,k])/dx + (y) + (z)
+ *               -> f_x[i,j,k] = (g[i,j,k] - g[i+1,j,k])/dx
+ *
+ *   RZ, r != 0  div[i,j] = [(r+dr/2) Er[i,j] - (r-dr/2) Er[i-1,j]]/(r dr) + dEz/dz
+ *               -> f_r[i,j] = (r+dr/2)/dr * (g[i,j]/r_i - g[i+1,j]/r_{i+1})
+ *
+ *   RZ, r == 0  div[0,j] = 4 Er[0,j]/dr + dEz/dz     (the on-axis regularization)
+ *               -> f_r[0,j] = 4 g[0,j]/dr - g[1,j]/(2 dr)
+ *
+ * Pass B is then applied unchanged.
+ */
+void WarpXBuildAdjointRHSVolumeFunctional (amrex::MultiFab& rhs,
+                                           std::string const& region,
+                                           amrex::iMultiFab const& dmsk,
+                                           int lev)
+{
+    using ablastr::fields::Direction;
+    using warpx::fields::FieldType;
+    using namespace amrex;
+
+    auto& warpx = WarpX::GetInstance();
+    const auto dx = warpx.Geom(lev).CellSizeArray();
+    const auto problo = warpx.Geom(lev).ProbLoArray();
+    const Periodicity& period = warpx.Geom(lev).periodicity();
+
+    Parser rparser = utils::parser::makeParser(region, {"x","y","z"});
+    auto fun_w = utils::parser::compileParser<3>(&rparser);
+
+    // g[n] = eps0 * V_n * w_k[n], on the nodes, with one ghost cell so that the
+    // edge differences below can reach the neighbouring node on a box face.
+    MultiFab const& divE_like = *warpx.m_fields.get(FieldType::Efield_fp, Direction{0}, lev);
+    BoxArray nodal_ba = divE_like.boxArray();
+    nodal_ba.enclosedCells();
+    nodal_ba.surroundingNodes();
+    MultiFab g(nodal_ba, divE_like.DistributionMap(), 1, 1);
+    g.setVal(0.0);
+
+#ifdef WARPX_DIM_RZ
+    const Real axis_factor = warpx.RZAxisVolumeFactor();
+#endif
+    for (MFIter mfi(g); mfi.isValid(); ++mfi) {
+        auto const& ga = g.array(mfi);
+        amrex::ParallelFor(mfi.growntilebox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+#if defined(WARPX_DIM_3D)
+                const Real x = problo[0] + Real(i)*dx[0];
+                const Real y = problo[1] + Real(j)*dx[1];
+                const Real z = problo[2] + Real(k)*dx[2];
+                const Real vol = dx[0]*dx[1]*dx[2];
+#elif defined(WARPX_DIM_RZ)
+                const Real x = problo[0] + Real(i)*dx[0];
+                const Real y = 0._rt;
+                const Real z = problo[1] + Real(j)*dx[1];
+                const Real radial_measure = (x == 0._rt)
+                    ? MathConst::pi*dx[0]*axis_factor : 2._rt*MathConst::pi*x;
+                const Real vol = dx[0]*dx[1]*radial_measure;
+                amrex::ignore_unused(k);
+#else
+                const Real x = problo[0] + Real(i)*dx[0];
+                const Real y = 0._rt;
+                const Real z = problo[1] + Real(j)*dx[1];
+                const Real vol = dx[0]*dx[1];
+                amrex::ignore_unused(k);
+#endif
+                ga(i,j,k) = PhysConst::epsilon_0 * vol * fun_w(x, y, z);
+            });
+    }
+    g.FillBoundary(period);
+
+    // edge coefficients, on the Efield_fp layout that pass B expects
+    Vector<MultiFab> f(AMREX_SPACEDIM);
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+        // in RZ the second edge direction is z, i.e. Efield_fp component 2
+        const int comp = (AMREX_SPACEDIM == 2 && idim == 1) ? 2 : idim;
+        MultiFab const& E = *warpx.m_fields.get(FieldType::Efield_fp, Direction{comp}, lev);
+        f[idim].define(E.boxArray(), E.DistributionMap(), 1, 1);
+        f[idim].setVal(0.0);
+    }
+
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        const int si = (idim == 0) ? 1 : 0;
+        const int sj = (idim == 1) ? 1 : 0;
+        const int sk = (idim == 2) ? 1 : 0;
+        const Real inv_d = 1._rt / dx[idim];
+#ifdef WARPX_DIM_RZ
+        const Real dr = dx[0];
+        const Real rmin = problo[0];
+        const bool radial = (idim == 0);
+#endif
+        for (MFIter mfi(f[idim]); mfi.isValid(); ++mfi) {
+            auto const& fa = f[idim].array(mfi);
+            auto const& ga = g.const_array(mfi);
+            amrex::ParallelFor(mfi.tilebox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+#ifdef WARPX_DIM_RZ
+                    if (radial) {
+                        // radius of this Er edge, cell-centred in r
+                        const Real r_lo = rmin + Real(i)*dr;
+                        const Real r_hi = r_lo + dr;
+                        const Real r_edge = r_lo + 0.5_rt*dr;
+                        const Real lo_term = (r_lo == 0._rt)
+                            ? 4._rt*ga(i,j,k)/dr            // on-axis regularization
+                            : (r_edge/dr)*ga(i,j,k)/r_lo;
+                        const Real hi_term = (r_edge/dr)*ga(i+1,j,k)/r_hi;
+                        fa(i,j,k) = lo_term - hi_term;
+                        return;
+                    }
+#endif
+                    fa(i,j,k) = (ga(i,j,k) - ga(i+si,j+sj,k+sk)) * inv_d;
+                });
+        }
+    }
+
+    // A nodal array on a periodic axis carries the seam node twice: index 0 and
+    // index N are the same unknown. The functional's sum runs over DISTINCT
+    // nodes -- IntegrateRhoPsi's sum_unique enforces that at measurement time --
+    // so a row built over every array entry is too strong by (N+1)/N in each
+    // periodic direction. Measured before this correction, Psi came out 1.1136x
+    // the analytic coax weighting potential at NZ = 8 and 1.0569x at NZ = 16,
+    // against the predicted 1.125 and 1.0625. Drop the duplicate layer for the
+    // components that are nodal in that direction; the edge-centred component is
+    // unaffected because it has only N entries to begin with.
+    const amrex::Box ndom = amrex::surroundingNodes(warpx.Geom(lev).Domain());
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+        const amrex::IntVect ixt = f[idim].ixType().ixType();
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            if (!period.isPeriodic(d)) { continue; }
+            if (ixt[d] != amrex::IndexType::NODE) { continue; }
+            const int seam = ndom.bigEnd(d);
+            for (MFIter mfi(f[idim]); mfi.isValid(); ++mfi) {
+                amrex::Box bx = mfi.tilebox();
+                if (bx.bigEnd(d) < seam || bx.smallEnd(d) > seam) { continue; }
+                bx.setSmall(d, seam);
+                bx.setBig(d, seam);
+                auto const& fa = f[idim].array(mfi);
+                amrex::ParallelFor(bx,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                    {
+                        fa(i,j,k) = 0._rt;
+                    });
+            }
+        }
+    }
+
+    ScatterEdgeCoefficientsToNodes(f, rhs, dmsk, lev);
 }
 
 bool WarpXSolveAdjointWeighting (amrex::MultiFab& psi,
